@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>PS1 Room — 仿射纹理蠕动还原</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas#gl { display: block; width: 100vw; height: 100vh; }
+  #hud, #hint {
+    position: fixed; color: #b9c4b9; z-index: 10;
+    font: 12px/1.55 "Courier New", Consolas, monospace;
+    text-shadow: 0 0 4px rgba(120, 255, 120, .35), 0 1px 0 #000;
+    pointer-events: none; user-select: none; letter-spacing: .5px;
+  }
+  #hud { left: 14px; top: 12px; }
+  #hud .title { color: #e6f2e6; margin-bottom: 4px; }
+  #hint { left: 14px; bottom: 10px; opacity: .8; }
+  #hud kbd, #hint kbd {
+    display: inline-block; min-width: 9px; text-align: center;
+    border: 1px solid #55614f; border-radius: 2px; padding: 0 3px;
+    background: #101510; color: #dfe8df; font: inherit;
+  }
+  .on  { color: #71ff71; }
+  .off { color: #ff5f56; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud"></div>
+<div id="hint"><kbd>A</kbd> 仿射映射 <kbd>V</kbd> 顶点取整 <kbd>T</kbd> 邻近采样 <kbd>C</kbd> CRT <kbd>H</kbd> HUD &mdash; 相机静止微漂移中，盯住墙砖缝隙可见纹理游动</div>
+<script>/*__THREE__*/</script>
+<script>/*__APP__*/</script>
+</body>
+</html>
