@@ -3,7 +3,7 @@
 
   // ============================== config ==============================
   var IW = 320, IH = 240;                     // PS1-era internal framebuffer
-  var state = { affine: true, snap: true, nearest: true, crt: true, hud: true, flicker: true };
+  var state = { affine: true, snap: true, nearest: true, crt: true, hud: true, flicker: true, fov: 55.4 };
   var LAMP = new THREE.Vector3(0, 2.42, 0);   // hanging bulb = the light source
   var EYE = 1.62, RADIUS = 0.35;
 
@@ -478,7 +478,7 @@
   })();
 
   // ====================== camera: idle drift + roam ====================
-  var camera = new THREE.PerspectiveCamera(55.4, IW / IH, 0.1, 50);
+  var camera = new THREE.PerspectiveCamera(state.fov, IW / IH, 0.1, 50);
   var basePos = new THREE.Vector3(2.1, EYE, 2.2);
   var baseTarget = new THREE.Vector3(-4, 1.30, -2.4);
   var idlePos = new THREE.Vector3(), idleQuat = new THREE.Quaternion();
@@ -700,7 +700,8 @@
       '<div><kbd>3</kbd> nearest filter&nbsp;&nbsp;' + onoff(state.nearest) + '</div>' +
       '<div><kbd>4</kbd> lamp flicker&nbsp;&nbsp;&nbsp;' + onoff(state.flicker) + '</div>' +
       '<div><kbd>5</kbd> crt filter&nbsp;&nbsp;&nbsp;&nbsp;' + onoff(state.crt) + '</div>' +
-      '<div><kbd>6</kbd> hud&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;' + onoff(state.hud) + '</div>';
+      '<div><kbd>6</kbd> hud&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;' + onoff(state.hud) + '</div>' +
+      '<div><kbd>[</kbd><kbd>]</kbd> fov&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;' + state.fov.toFixed(0) + '&deg; (h ~' + (2 * Math.atan(Math.tan(state.fov * Math.PI / 360) * IW / IH) * 180 / Math.PI).toFixed(0) + '&deg;)</div>';
   }
   function setFilter() {
     var f = state.nearest ? THREE.NearestFilter : THREE.LinearFilter;
@@ -746,6 +747,13 @@
       keys[k] = true; walk.lastInput = nowT; return;
     }
     if (k === 'm') { walk.active ? exitRoam() : enterRoam(); return; }
+    if (e.key === '[' || e.key === ']') {
+      state.fov = Math.max(30, Math.min(100, state.fov + (e.key === ']' ? -2 : 2)));
+      camera.fov = state.fov;
+      camera.updateProjectionMatrix();
+      updateHud();
+      return;
+    }
     if (k === '1') state.affine = !state.affine;
     else if (k === '2') state.snap = !state.snap;
     else if (k === '3') { state.nearest = !state.nearest; setFilter(); }
