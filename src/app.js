@@ -264,7 +264,10 @@
     '    vec2 px = clip.xy / clip.w * hs + hs;',
     '    px = floor(px) + 0.5;',
     '    clip.xy = (px / hs - 1.0) * clip.w;',
-    '    clip.z = floor(clip.z / clip.w * 256.0) / 256.0 * clip.w;',
+    // linear view-depth buckets (3 cm): perspective z/w is so non-linear that
+    // 256 global buckets = >1 m at wall distance -> props punched through by walls
+    '    float wq = floor(clip.w * 32.0) / 32.0;',
+    '    clip.z = -projectionMatrix[2][2] * wq + projectionMatrix[3][2];',
     '  }',
     '  vAff = vec3(uv * clip.w, clip.w);',
     '  gl_Position = clip;',
@@ -577,6 +580,8 @@
         '    vec2 px = clip.xy / clip.w * hs + hs;',
         '    px = floor(px) + 0.5;',
         '    clip.xy = (px / hs - 1.0) * clip.w;',
+        '    float wq = floor(clip.w * 32.0) / 32.0;',
+        '    clip.z = -projectionMatrix[2][2] * wq + projectionMatrix[3][2];',
         '  }',
         '  gl_Position = clip;',
         '}'
@@ -681,7 +686,7 @@
 
   // ========================== v5: bookshelf ============================
   roomScene.add(cs(boxMesh(matWood, 2.9, 0.975, -3.77, 1.0, 1.95, 0.45, 0.8)));
-  roomScene.add(quadMesh(matBook, 2.9, 0.975, -3.535, 0, 0, 1, 0.92, 1.86, 1 / 0.92, 1 / 1.86));
+  roomScene.add(quadMesh(matBook, 2.9, 0.975, -3.545, 0, 0, 1, 0.92, 1.86, 1 / 0.92, 1 / 1.86));
   blobRect(2.9, -3.77, 1.10, 0.51, blobMat, 0.012);     // shelf contact shadow
 
   // ================= v5: wiring + swaying burnt bulb ====================

@@ -72,7 +72,7 @@ PS1 GPU 没有透视校正（Perspective Correct）纹理单元，UV 随屏幕�
 |---|---|
 | **真实性** | 320×240 内部分辨率、整数倍最近邻放大、4:3 letterbox |
 | **仿射纹理** | 手写 GLSL 取消透视校正，UV 屏幕空间线性插值 → 经典 texture warp |
-| **顶点抖动** | 顶点吸附到 320×240 整像素网格 + 深度量化（256 级），相机移动时模型边缘"爬行" |
+| **顶点抖动** | 顶点吸附到 320×240 整像素网格 + 深度量化（3 cm 视深桶），相机移动时模型边缘"爬行" |
 | **色深还原** | 15-bit RGB555 量化 + 4×4 Bayer 有序抖动 |
 | **光照** | 全部顶点色 Gouraud 烘焙（以吊灯为光源位置），叠加每帧灯丝闪烁 uniform |
 | **实时阴影** | PointLight 256² 立方体阴影贴图 ×6 面，硬边 + Bayer 抖动半影带；阴影浓度与灯丝闪烁反耦合（"呼吸"） |
@@ -176,8 +176,11 @@ vec2 hs = uRes * 0.5;
 vec2 px = clip.xy / clip.w * hs + hs;
 px = floor(px) + 0.5;                       // 吸附到整像素中心
 clip.xy = (px / hs - 1.0) * clip.w;
-clip.z = floor(clip.z / clip.w * 256.0) / 256.0 * clip.w;  // 深度量化 → z-fighting 闪烁
+float wq = floor(clip.w * 32.0) / 32.0;     // 深度量化：视深按 3 cm 分桶 → z-fighting 闪烁
+clip.z = -projectionMatrix[2][2] * wq + projectionMatrix[3][2];
 ```
+
+深度量化刻意选在**视空间线性**分桶，而不是对 `z/w` 全局取 256 级——透视深度高度非线性，全局 256 桶在 6 m 处一档就覆盖 1 m 以上世界深度，书架会整块被后墙"穿模"顶掉贴图；3 cm 线性桶既保留掠射角下的经典 PS1 闪烁，又保证近邻表面（墙-道具间距 ≥ 10 cm）稳定分层。
 
 ### RGB555 + Bayer 抖动
 
@@ -242,7 +245,7 @@ ps1-room/
 
 ```bash
 node build.js
-# index.html written: 698.4 KB
+# index.html written: 698.8 KB
 ```
 
 构建脚本会检查内联源码不含 `</script`，防止提前截断脚本标签。
