@@ -950,15 +950,18 @@
     var f = state.nearest ? THREE.NearestFilter : THREE.LinearFilter;
     allTex.forEach(function (t) { t.magFilter = t.minFilter = f; t.needsUpdate = true; });
   }
+  function tryLock() {
+    try {
+      var p = canvas.requestPointerLock();
+      if (p && p.catch) p.catch(function () {});
+    } catch (e) { /* unsupported / blocked: fallback stays active */ }
+  }
   function enterRoam() {
     if (walk.active) return;
     walk.active = true;
     updateHud();
     // pointer lock is a bonus; roam also works with plain mousemove deltas
-    try {
-      var p = canvas.requestPointerLock();
-      if (p && p.catch) p.catch(function () {});
-    } catch (e) { /* unsupported / blocked: fallback stays active */ }
+    tryLock();
   }
   function exitRoam() {
     if (!walk.active) return;
@@ -972,13 +975,47 @@
     walk.lastInput = nowT;
     updateHud();
   }
-  canvas.addEventListener('click', function () { walk.active ? exitRoam() : enterRoam(); });
+  var lookDownX = 0, lookDownY = 0, lookMoved = 0, lookDragged = false, lockWasOnPress = false;
+  canvas.addEventListener('mousedown', function (e) {
+    lookDownX = e.clientX; lookDownY = e.clientY;
+    lookMoved = 0; lookDragged = false;
+    lockWasOnPress = !!document.pointerLockElement;
+  });
+  // Drag detection uses accumulated motion deltas, not clientX jumps: once a
+  // drag re-acquires pointer lock the cursor position freezes, and a
+  // locked-user drag has to count too (the up-click must not exit roam).
+  document.addEventListener('mousemove', function (e) {
+    if (!walk.active || !(e.buttons & 1)) return;
+    lookMoved += Math.abs(e.movementX) + Math.abs(e.movementY)
+      + Math.abs(e.clientX - lookDownX) + Math.abs(e.clientY - lookDownY);
+    lookDownX = e.clientX; lookDownY = e.clientY;
+    if (lookMoved > 8) lookDragged = true;
+  });
+  canvas.addEventListener('click', function (e) {
+    var consumed = false;
+    if (lookDragged) {
+      consumed = true;                       // drag-look release, not a toggle
+    } else if (!document.pointerLockElement && lockWasOnPress) {
+      // Esc natively dropped the lock (no page keydown); a bare click after
+      // the press re-acquires it instead of exiting roam. A drag or a plain
+      // click-while-unlocked still toggles normally.
+      tryLock(); consumed = true;
+    }
+    lookDragged = false; lookMoved = 0;
+    if (consumed) return;
+    walk.active ? exitRoam() : enterRoam();
+  });
   document.addEventListener('pointerlockchange', updateHud);
   document.addEventListener('pointerlockerror', function () { /* fallback mouse-look stays active */ });
   document.addEventListener('mousemove', function (e) {
     if (!walk.active) return;
-    walk.yaw -= e.movementX * 0.0022;
-    walk.pitch -= e.movementY * 0.0022;
+    // without pointer lock the OS cursor recentering / window re-entry would
+    // teleport the view, so fallback look is drag-only (left button held)
+    if (!document.pointerLockElement && !(e.buttons & 1)) return;
+    var dx = Math.max(-260, Math.min(260, e.movementX));
+    var dy = Math.max(-260, Math.min(260, e.movementY));
+    walk.yaw -= dx * 0.0022;
+    walk.pitch -= dy * 0.0022;
     var lim = Math.PI / 180 * 85;
     walk.pitch = Math.max(-lim, Math.min(lim, walk.pitch));
     walk.lastInput = nowT;
