@@ -337,6 +337,73 @@
     scene.add(decals.blobGroup); scene.add(decals.decalGroup);
 
 
+
+    // ---------------- v7 atmosphere + props -----------------------------
+    // chozuya (water pavilion) near the entrance
+    (function () {
+      var cx = -4.9, cz = 9.4;
+      [[-0.6, -0.6], [0.6, -0.6], [-0.6, 0.6], [0.6, 0.6]].forEach(function (p) {
+        scene.add(cs(boxMesh(matBark, cx + p[0], 1.05, cz + p[1], 0.10, 2.1, 0.10, 2)));
+      });
+      scene.add(boxMesh(matStone, cx, 0.55, cz, 1.45, 0.9, 1.45, 1.0));
+      scene.add(PS1.groundGrid(matWater, cx, cz, 1.0, 1.0, 1, 0.5, 1.02, 1));
+      scene.add(cs(quadCorners(matRoof, [cx - 1.0, 2.12, cz - 1.0], [cx + 1.0, 2.12, cz - 1.0],
+        [cx + 0.75, 2.62, cz], [cx - 0.75, 2.62, cz], 2, 1.4)));
+      scene.add(cs(quadCorners(matRoof, [cx - 1.0, 2.12, cz + 1.0], [cx + 1.0, 2.12, cz + 1.0],
+        [cx + 0.75, 2.62, cz], [cx - 0.75, 2.62, cz], 2, 1.4)));
+      // ladle across the basin
+      scene.add(boxMesh(matBark, cx, 1.12, cz + 0.3, 0.55, 0.04, 0.05, 2, 0.25));
+      colliders.push({ x0: cx - 0.85, z0: cz - 0.85, x1: cx + 0.85, z1: cz + 0.85 });
+    })();
+    // drainage channels flanking the approach + small stone bridges at each torii
+    [[-1.75, 1], [1.75, -1]].forEach(function (chn) {
+      scene.add(PS1.groundGrid(matWater, chn[0], 4.6, 0.34, 8.8, 4, 0.8, 0.045, 1));
+    });
+    [7.5, 3.8, 0.2].forEach(function (bz) {
+      [-1.75, 1.75].forEach(function (bx) {
+        scene.add(cs(boxMesh(matStone, bx, 0.055, bz, 0.62, 0.11, 0.5, 1.0)));
+      });
+    });
+    // shimenawa tassels hanging from the first torii's nuki beam
+    [-1.5, 0, 1.5].forEach(function (tx) {
+      scene.add(boxMesh(matBark, tx, 2.28, 7.5, 0.09, 0.42, 0.09, 2, 0, [0.85, 0.82, 0.72]));
+      scene.add(boxMesh(matBark, tx, 2.02, 7.5, 0.12, 0.14, 0.12, 2, 0, [0.7, 0.66, 0.56]));
+    });
+    // stone retaining walls north of the fences
+    [-3.0, 3.0].forEach(function (wx) {
+      scene.add(cs(boxMesh(matStone, wx, 0.25, -4.4, 0.55, 0.5, 1.9, 1.1)));
+    });
+    // wind chimes under the shrine eaves (one sways)
+    var chime = new THREE.Group();
+    chime.position.set(2.2, 3.32, -7.2);
+    (function () {
+      var matChime = ps1Material(PS1.solidTexture(190, 195, 205));
+      chime.add(boxMesh(matChime, 0, -0.18, 0, 0.10, 0.22, 0.10, 2));
+      chime.add(boxMesh(matTorii, 0, -0.05, 0, 0.16, 0.05, 0.16, 2));
+      chime.add(boxMesh(matChime, 0, -0.36, 0, 0.03, 0.18, 0.03, 2));
+      scene.add(chime);
+    })();
+    scene.add(boxMesh(ps1Material(PS1.solidTexture(190, 195, 205)), -2.2, 3.1, -7.2, 0.10, 0.30, 0.10, 2));
+    // omikuji stand beside the ema rack
+    scene.add(cs(prismMesh(matPlank, 5.1, -6.6, 0.2, 0.7, 6, 1.4, 1)));
+    for (var om = 0; om < 5; om++) {
+      scene.add(boxMesh(ps1Material(PS1.solidTexture(238, 235, 225)), 5.1 + Math.cos(om * 1.3) * 0.12, 0.86, -6.6 + Math.sin(om * 1.3) * 0.12, 0.035, 0.26, 0.02, 2, om * 0.4 - 0.2));
+    }
+    // extra mid-path lanterns
+    shortLantern(-5.2, -0.5); shortLantern(5.2, -0.5);
+    // fireflies over the pond and trees at dusk
+    var fireflies = PS1.makeParticles({
+      mode: 'dust', count: 90, color: [0.78, 1.0, 0.42],
+      size: 0.022, speed: 1, sway: 0.4,
+      area: [-10, -1, -2, 7, 2.4]
+    });
+    scene.add(fireflies);
+    // moss rings at torii feet
+    var matMoss7 = PS1.decalMaterial(0.06, 0.10, 0.05, 0.42);
+    [-2.3, 2.3].forEach(function (mx, i) {
+      decals.oct(mx, 7.5, 0.7, matMoss7, 0.006, 100 + i);
+    });
+
     // ---------------- v6 detail pass ------------------------------------
     // ema plaque rack beside the shrine steps
     (function () {
@@ -420,17 +487,18 @@
       scene: scene,
       colliders: colliders,
       bounds: { x0: -12.5, x1: 12.5, z0: -7.6, z1: 12.5 },
-      spawn: [10.8, 8.8, Math.atan2(-(-3.5 - 10.8), -(-5.5 - 8.8)), 0.0],
-      idle: { pos: [10.8, 1.62, 8.8], target: [-3.5, 2.0, -5.5] },
+      spawn: [10.8, 8.8, Math.atan2(-(-4.5 - 10.8), -(-4.0 - 8.8)), 0.0],
+      idle: { pos: [10.8, 1.62, 8.8], target: [-4.5, 2.2, -4.0] },
       fog: { color: [0.60, 0.37, 0.26], near: 26, far: 64 },
       noFlicker: true,
       blobGroup: decals.blobGroup,
-      particles: [petals, incense],
+      particles: [petals, incense, fireflies],
       update: function (t) {
         waterTex.offset.x = t * 0.018;
         waterTex.offset.y = t * 0.042;
         var glow = 0.9 + 0.08 * Math.sin(t * 11.3) + 0.04 * Math.sin(t * 29.7 + 1.1);
         matLanternGlow.uniforms.uFlicker.value = glow;
+        chime.rotation.z = 0.18 * Math.sin(t * 2.1);
         koi.forEach(function (k) {
           var d = k.userData;
           var a = d.ph + t * d.sp;

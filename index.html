@@ -496,6 +496,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       uSunCut: { value: cfg.sunCut || 0.9985 },
       uSunGlow: { value: cfg.sunGlow || 0 },
       uStars: { value: cfg.stars || 0 },
+      uMeteors: { value: cfg.meteors || 0 },
       uTime: shared.uTime,
       uBayer: shared.uBayer
     };
@@ -513,7 +514,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       fragmentShader: [
         'uniform vec3 uTop, uHorizon, uBottom, uSunCol;',
         'uniform vec3 uSunDir;',
-        'uniform float uSunCut, uSunGlow, uStars, uTime;',
+        'uniform float uSunCut, uSunGlow, uStars, uMeteors, uTime;',
         'uniform sampler2D uBayer;',
         'varying vec3 vDir;',
         'float h31(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }',
@@ -528,6 +529,19 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         '    float st = h31(sp);',
         '    float star = step(0.9982, st) * uStars * smoothstep(0.03, 0.25, d.y);',
         '    col += star * (0.55 + 0.45 * sin(uTime * 2.5 + st * 90.0));',
+        '  }',
+        '  if (uMeteors > 0.0) {',                       // one shooting star every ~9 s
+        '    float cyc = floor(uTime / 9.0);',
+        '    float ph = fract(uTime / 9.0);',
+        '    float mu = 0.4 + h31(vec3(cyc, 7.0, 3.0)) * 1.8;',
+        '    float mv = 0.45 + h31(vec3(cyc, 9.0, 1.0)) * 0.35;',
+        '    if (ph < 0.09) {',
+        '      float p = ph / 0.09;',
+        '      float du = atan(d.z, d.x) - (mu + 0.7 * p);',
+        '      du = mod(du + 3.14159, 6.2832) - 3.14159;',
+        '      float dv = d.y - (mv - 0.22 * p);',
+        '      col += vec3(0.85, 0.9, 1.0) * exp(-(du*du + dv*dv) * 700.0) * (1.0 - p) * uMeteors * step(0.15, d.y);',
+        '    }',
         '  }',
         '  float b = texture2D(uBayer, (floor(mod(gl_FragCoord.xy, 4.0)) + 0.5) / 4.0).r;',
         '  col = clamp(col + (b - 0.5) * (1.5 / 32.0), 0.0, 1.0);',
@@ -1904,6 +1918,73 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     scene.add(decals.blobGroup); scene.add(decals.decalGroup);
 
 
+
+    // ---------------- v7 atmosphere + props -----------------------------
+    // chozuya (water pavilion) near the entrance
+    (function () {
+      var cx = -4.9, cz = 9.4;
+      [[-0.6, -0.6], [0.6, -0.6], [-0.6, 0.6], [0.6, 0.6]].forEach(function (p) {
+        scene.add(cs(boxMesh(matBark, cx + p[0], 1.05, cz + p[1], 0.10, 2.1, 0.10, 2)));
+      });
+      scene.add(boxMesh(matStone, cx, 0.55, cz, 1.45, 0.9, 1.45, 1.0));
+      scene.add(PS1.groundGrid(matWater, cx, cz, 1.0, 1.0, 1, 0.5, 1.02, 1));
+      scene.add(cs(quadCorners(matRoof, [cx - 1.0, 2.12, cz - 1.0], [cx + 1.0, 2.12, cz - 1.0],
+        [cx + 0.75, 2.62, cz], [cx - 0.75, 2.62, cz], 2, 1.4)));
+      scene.add(cs(quadCorners(matRoof, [cx - 1.0, 2.12, cz + 1.0], [cx + 1.0, 2.12, cz + 1.0],
+        [cx + 0.75, 2.62, cz], [cx - 0.75, 2.62, cz], 2, 1.4)));
+      // ladle across the basin
+      scene.add(boxMesh(matBark, cx, 1.12, cz + 0.3, 0.55, 0.04, 0.05, 2, 0.25));
+      colliders.push({ x0: cx - 0.85, z0: cz - 0.85, x1: cx + 0.85, z1: cz + 0.85 });
+    })();
+    // drainage channels flanking the approach + small stone bridges at each torii
+    [[-1.75, 1], [1.75, -1]].forEach(function (chn) {
+      scene.add(PS1.groundGrid(matWater, chn[0], 4.6, 0.34, 8.8, 4, 0.8, 0.045, 1));
+    });
+    [7.5, 3.8, 0.2].forEach(function (bz) {
+      [-1.75, 1.75].forEach(function (bx) {
+        scene.add(cs(boxMesh(matStone, bx, 0.055, bz, 0.62, 0.11, 0.5, 1.0)));
+      });
+    });
+    // shimenawa tassels hanging from the first torii's nuki beam
+    [-1.5, 0, 1.5].forEach(function (tx) {
+      scene.add(boxMesh(matBark, tx, 2.28, 7.5, 0.09, 0.42, 0.09, 2, 0, [0.85, 0.82, 0.72]));
+      scene.add(boxMesh(matBark, tx, 2.02, 7.5, 0.12, 0.14, 0.12, 2, 0, [0.7, 0.66, 0.56]));
+    });
+    // stone retaining walls north of the fences
+    [-3.0, 3.0].forEach(function (wx) {
+      scene.add(cs(boxMesh(matStone, wx, 0.25, -4.4, 0.55, 0.5, 1.9, 1.1)));
+    });
+    // wind chimes under the shrine eaves (one sways)
+    var chime = new THREE.Group();
+    chime.position.set(2.2, 3.32, -7.2);
+    (function () {
+      var matChime = ps1Material(PS1.solidTexture(190, 195, 205));
+      chime.add(boxMesh(matChime, 0, -0.18, 0, 0.10, 0.22, 0.10, 2));
+      chime.add(boxMesh(matTorii, 0, -0.05, 0, 0.16, 0.05, 0.16, 2));
+      chime.add(boxMesh(matChime, 0, -0.36, 0, 0.03, 0.18, 0.03, 2));
+      scene.add(chime);
+    })();
+    scene.add(boxMesh(ps1Material(PS1.solidTexture(190, 195, 205)), -2.2, 3.1, -7.2, 0.10, 0.30, 0.10, 2));
+    // omikuji stand beside the ema rack
+    scene.add(cs(prismMesh(matPlank, 5.1, -6.6, 0.2, 0.7, 6, 1.4, 1)));
+    for (var om = 0; om < 5; om++) {
+      scene.add(boxMesh(ps1Material(PS1.solidTexture(238, 235, 225)), 5.1 + Math.cos(om * 1.3) * 0.12, 0.86, -6.6 + Math.sin(om * 1.3) * 0.12, 0.035, 0.26, 0.02, 2, om * 0.4 - 0.2));
+    }
+    // extra mid-path lanterns
+    shortLantern(-5.2, -0.5); shortLantern(5.2, -0.5);
+    // fireflies over the pond and trees at dusk
+    var fireflies = PS1.makeParticles({
+      mode: 'dust', count: 90, color: [0.78, 1.0, 0.42],
+      size: 0.022, speed: 1, sway: 0.4,
+      area: [-10, -1, -2, 7, 2.4]
+    });
+    scene.add(fireflies);
+    // moss rings at torii feet
+    var matMoss7 = PS1.decalMaterial(0.06, 0.10, 0.05, 0.42);
+    [-2.3, 2.3].forEach(function (mx, i) {
+      decals.oct(mx, 7.5, 0.7, matMoss7, 0.006, 100 + i);
+    });
+
     // ---------------- v6 detail pass ------------------------------------
     // ema plaque rack beside the shrine steps
     (function () {
@@ -1987,17 +2068,18 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       scene: scene,
       colliders: colliders,
       bounds: { x0: -12.5, x1: 12.5, z0: -7.6, z1: 12.5 },
-      spawn: [10.8, 8.8, Math.atan2(-(-3.5 - 10.8), -(-5.5 - 8.8)), 0.0],
-      idle: { pos: [10.8, 1.62, 8.8], target: [-3.5, 2.0, -5.5] },
+      spawn: [10.8, 8.8, Math.atan2(-(-4.5 - 10.8), -(-4.0 - 8.8)), 0.0],
+      idle: { pos: [10.8, 1.62, 8.8], target: [-4.5, 2.2, -4.0] },
       fog: { color: [0.60, 0.37, 0.26], near: 26, far: 64 },
       noFlicker: true,
       blobGroup: decals.blobGroup,
-      particles: [petals, incense],
+      particles: [petals, incense, fireflies],
       update: function (t) {
         waterTex.offset.x = t * 0.018;
         waterTex.offset.y = t * 0.042;
         var glow = 0.9 + 0.08 * Math.sin(t * 11.3) + 0.04 * Math.sin(t * 29.7 + 1.1);
         matLanternGlow.uniforms.uFlicker.value = glow;
+        chime.rotation.z = 0.18 * Math.sin(t * 2.1);
         koi.forEach(function (k) {
           var d = k.userData;
           var a = d.ph + t * d.sp;
@@ -2175,7 +2257,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     scene.add(PS1.makeSky({
       top: [0.015, 0.025, 0.05], horizon: [0.115, 0.145, 0.195], bottom: [0.05, 0.06, 0.08],
       sunDir: MOON.toArray(), sunCol: [0.5, 0.6, 0.8], sunCut: 0.9994, sunGlow: 0.08,
-      stars: 0.32, radius: 90
+      stars: 0.32, meteors: 0.9, radius: 90
     }));
 
     // ground plane far beyond the street (drowns in fog)
@@ -2314,16 +2396,89 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     bareTree(-4.9, -16.5, 1.0); bareTree(4.9, -13.8, 0.85); bareTree(-4.9, 14.6, 1.1);
 
 
+
+    // ---------------- v7 atmosphere + props -----------------------------
+    // a cat on the west fence, tail swaying, eyes catching the moonlight
+    var catTail = new THREE.Group();
+    (function () {
+      var matCat = ps1Material(PS1.solidTexture(16, 15, 18));
+      var matEye = PS1.privateFlicker(ps1Material(PS1.solidTexture(180, 230, 120)));
+      var cx = -5.32, cz = 14.9;
+      PS1.blobMesh(matCat, cx, 0.86, cz, 0.13, 0.8, 0.25, function () { return [1, 1, 1]; });
+      scene.add(PS1.blobMesh(matCat, cx, 0.86, cz, 0.13, 0.8, 0.25, function () { return [1, 1, 1]; }));
+      scene.add(boxMesh(matCat, cx, 0.98, cz + 0.10, 0.10, 0.09, 0.11, 2));
+      scene.add(boxMesh(matEye, cx - 0.025, 0.99, cz + 0.15, 0.018, 0.018, 0.01, 2, 0, [1.3, 1.6, 0.8]));
+      scene.add(boxMesh(matEye, cx + 0.025, 0.99, cz + 0.15, 0.018, 0.018, 0.01, 2, 0, [1.3, 1.6, 0.8]));
+      catTail.position.set(cx + 0.14, 0.92, cz + 0.08);
+      catTail.add(boxMesh(matCat, 0.1, 0.1, 0, 0.24, 0.04, 0.04, 2, -0.5));
+      scene.add(catTail);
+    })();
+    // swing set in the east yard
+    (function () {
+      var sx = 7.4, sz = 8.2;
+      scene.add(cs(boxMesh(matDarkWood, sx - 1.1, 1.15, sz, 0.1, 2.4, 0.1, 2, 0.32)));
+      scene.add(cs(boxMesh(matDarkWood, sx + 1.1, 1.15, sz, 0.1, 2.4, 0.1, 2, -0.32)));
+      scene.add(cs(boxMesh(matDarkWood, sx, 2.3, sz, 2.6, 0.12, 0.12, 2)));
+      [-0.4, 0.4].forEach(function (o) {
+        scene.add(boxMesh(matMetal, sx + o - 0.25, 1.4, sz, 0.03, 1.7, 0.03, 3));
+        scene.add(boxMesh(matMetal, sx + o + 0.25, 1.4, sz, 0.03, 1.7, 0.03, 3));
+        scene.add(boxMesh(matDarkWood, sx + o, 0.58, sz, 0.55, 0.06, 0.3, 2));
+      });
+      colliders.push({ x0: sx - 1.3, z0: sz - 0.3, x1: sx + 1.3, z1: sz + 0.3 });
+    })();
+    // blue US-style mailbox by the road
+    scene.add(cs(prismMesh(ps1Material(PS1.solidTexture(38, 70, 150)), -4.62, 6.8, 0.24, 1.0, 8, 1.6, 1.4)));
+    colliders.push({ x0: -4.9, z0: 6.5, x1: -4.35, z1: 7.1 });
+    // flower pots on porches
+    [[-5.42, -13.2], [-5.42, -12.1], [5.42, 1.0], [5.42, 2.1]].forEach(function (p) {
+      scene.add(prismMesh(ps1Material(PS1.solidTexture(150, 84, 60)), p[0], p[1], 0.16, 0.26, 7, 1.4, 0.5, null, 0));
+      scene.add(PS1.blobMesh(matGrass, p[0], 0.34, p[1], 0.15, 0.9, 0.3, function () { return [0.9, 1.0, 0.9]; }));
+    });
+    // porch steps before two doors
+    [[-5.38, -4.93, 1], [5.38, 1.93, -1]].forEach(function (p) {
+      scene.add(boxMesh(matWalk, p[0] + p[2] * 0.25, 0.06, p[1], 0.5, 0.12, 1.0, 1.4));
+    });
+    // welcome mats
+    decals.rect(-5.05, -4.93, 0.8, 0.5, PS1.decalMaterial(0.10, 0.09, 0.08, 0.7), 0.13);
+    // newspapers on lawns
+    decals.rect(-6.4, 4.9, 0.42, 0.3, PS1.decalMaterial(0.72, 0.70, 0.62, 0.85), 0.012);
+    decals.rect(6.6, -12.4, 0.4, 0.28, PS1.decalMaterial(0.66, 0.64, 0.56, 0.85), 0.012);
+    // fallen-leaf drifts under the bare trees
+    var matLeaves = PS1.decalMaterial(0.20, 0.13, 0.05, 0.5);
+    [[-4.9, -16.2], [4.9, -13.6], [-4.9, 14.4]].forEach(function (p, i) {
+      decals.oct(p[0], p[1], 1.1, matLeaves, 0.005, 60 + i);
+    });
+    // third power cable + transformer can on the middle pole
+    (function () {
+      var zs = -16, ze = 12;
+      for (var seg = 0; seg < 7; seg++) {
+        var z0 = zs + (ze - zs) * seg / 7, z1 = zs + (ze - zs) * (seg + 1) / 7;
+        var ym = 5.5 - 0.4 * Math.sin(Math.PI * (seg + 0.5) / 7);
+        scene.add(boxMesh(matDarkWood, 5.9 + 0.85, ym, (z0 + z1) / 2, 0.03, 0.03, z1 - z0 + 0.02, 4, 0, [0.10, 0.11, 0.13]));
+      }
+      scene.add(cs(boxMesh(matMetal, 5.9, 5.05, -2, 0.55, 0.5, 0.4, 1.3)));
+      scene.add(prismMesh(matMetal, 5.9, -2.3, 0.05, 0.16, 6, 1, 0.4, null, 5.3));
+      scene.add(prismMesh(matMetal, 5.9, -1.7, 0.05, 0.16, 6, 1, 0.4, null, 5.3));
+    })();
+    // one-way arrow sign
+    scene.add(cs(boxMesh(matMetal, -4.62, 1.5, 10.9, 0.06, 3.0, 0.06, 2)));
+    scene.add(boxMesh(ps1Material(PS1.solidTexture(225, 225, 220)), -4.56, 2.55, 10.9, 0.05, 0.35, 0.75, 2, 0, [0.95, 0.95, 0.92]));
+    // downspouts on house corners + drip stains
+    [[-5.7, -9.9], [5.7, -6.0], [5.7, 12.9]].forEach(function (dp) {
+      scene.add(boxMesh(matMetal, dp[0], 1.6, dp[1], 0.08, 3.2, 0.08, 2));
+      decals.wall(dp[0] * 0.995, 0.5, dp[1], false, 0.3, 0.9, PS1.decalMaterial(0.04, 0.04, 0.045, 0.4));
+    });
+
     // ---------------- v6 detail pass ------------------------------------
     // stop sign at the south crosswalk (octagon face toward the camera)
-    scene.add(cs(boxMesh(matMetal, 2.5, 1.1, 16.6, 0.07, 2.2, 0.07, 2)));
+    scene.add(cs(boxMesh(matMetal, 1.8, 1.1, 12.8, 0.07, 2.2, 0.07, 2)));
     (function () {
       var face = prismMesh(matHydrant, 0, 0, 0.30, 0.05, 8, 1.8, 0.2, null, 0);
       face.rotation.x = Math.PI / 2;
-      face.position.set(2.5, 2.28, 16.6);
+      face.position.set(1.8, 2.28, 12.8);
       scene.add(face);
     })();
-    colliders.push({ x0: 2.35, z0: 16.45, x1: 2.65, z1: 16.75 });
+    colliders.push({ x0: 1.65, z0: 12.65, x1: 1.95, z1: 12.95 });
     // park benches on the sidewalks
     function bench(x, z) {
       scene.add(boxMesh(matDarkWood, x, 0.42, z, 0.55, 0.06, 1.6, 1.4));
@@ -2398,6 +2553,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         matLampGlow.uniforms.uFlicker.value = warm;
         matWindowWarm.uniforms.uFlicker.value = warm;
         matWindowCold.uniforms.uFlicker.value = 0.4 + 0.6 * Math.abs(Math.sin(t * 5.3) * Math.sin(t * 0.7));
+        catTail.rotation.z = 0.35 * Math.sin(t * 1.7);
       }
     };
   });
@@ -2782,6 +2938,89 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     });
 
 
+
+    // ---------------- v7 atmosphere + props -----------------------------
+    // fire braziers with living flame (steam-mode particles in orange)
+    var braziers = [];
+    var matCoal = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 150, 60)));
+    var matIron7 = ps1Material(PS1.solidTexture(54, 56, 62));
+    function brazier(x, z) {
+      [[-0.22, -0.13], [0.22, -0.13], [0, 0.26]].forEach(function (l) {
+        scene.add(cs(boxMesh(matIron7, x + l[0], 0.3, z + l[1], 0.06, 0.6, 0.06, 2, l[0] * 1.2)));
+      });
+      scene.add(cs(prismMesh(matIron7, x, z, 0.30, 0.22, 7, 1.8, 0.5, null, 0.58)));
+      scene.add(boxMesh(matCoal, x, 0.82, z, 0.36, 0.08, 0.36, 2, 0, [1.6, 0.8, 0.25]));
+      var flame = PS1.makeParticles({
+        mode: 'steam', count: 42, color: [1.0, 0.55, 0.16],
+        size: 0.045, speed: 1.5, sway: 0.1,
+        area: [x - 0.16, x + 0.16, z - 0.16, z + 0.16, 0.85]
+      });
+      scene.add(flame);
+      braziers.push(flame);
+      colliders.push({ x0: x - 0.35, z0: z - 0.35, x1: x + 0.35, z1: z + 0.35 });
+    }
+    brazier(-3.2, 1.9); brazier(3.8, -0.9);
+    // hanging shop sign on the NW house (bracket + carved board)
+    scene.add(cs(boxMesh(matBeam, -4.5, 3.4, -11.4, 0.85, 0.08, 0.08, 2)));
+    scene.add(boxMesh(matBeam, -4.15, 3.05, -11.4, 0.06, 0.6, 0.5, 2));
+    // spice sacks hanging on the stall backs
+    [[-0.9, 2.0, 1], [0, 2.15, 2], [0.8, 2.0, 3]].forEach(function (sp) {
+      var cols = [[188, 120, 50], [160, 60, 40], [90, 120, 60]];
+      var m = ps1Material(PS1.solidTexture(cols[sp[2] - 1][0], cols[sp[2] - 1][1], cols[sp[2] - 1][2]));
+      scene.add(PS1.blobMesh(m, -5.6 + sp[0], sp[1], -1.85, 0.13, 1.15, 0.25, function () { return [1.05, 1.0, 0.95]; }));
+    });
+    // sleeping dog by the bread stall
+    (function () {
+      var matDog = ps1Material(PS1.solidTexture(96, 66, 44));
+      scene.add(PS1.blobMesh(matDog, -5.05, 0.16, -0.2, 0.24, 0.62, 0.3, function () { return [1, 0.95, 0.9]; }));
+      scene.add(boxMesh(matDog, -5.3, 0.16, -0.1, 0.16, 0.14, 0.2, 2));
+      scene.add(boxMesh(matDog, -5.36, 0.35, -0.05, 0.04, 0.24, 0.04, 2, 0.7));
+    })();
+    // chicken coop + ramp
+    scene.add(PS1.blobMesh(matSack, 7.9, 0.35, 8.1, 0.45, 0.8, 0.35, function () { return [0.95, 0.9, 0.8]; }));
+    scene.add(boxMesh(matBeam, 7.35, 0.09, 8.1, 0.7, 0.06, 0.18, 2, 0.25));
+    // wheelbarrow
+    (function () {
+      var wx = -8.9, wz = 8.4;
+      var wheel = prismMesh(matBeam, 0, 0, 0.32, 0.09, 8, 1.4, 0.4, null, 0);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(wx, 0.32, wz);
+      scene.add(cs(wheel));
+      scene.add(cs(boxMesh(matBeam, wx + 0.35, 0.42, wz, 0.65, 0.4, 0.55, 1.4, 0.12)));
+      scene.add(boxMesh(matBeam, wx - 0.5, 0.42, wz - 0.18, 0.9, 0.06, 0.06, 2, 0.1));
+      scene.add(boxMesh(matBeam, wx - 0.5, 0.42, wz + 0.18, 0.9, 0.06, 0.06, 2, 0.1));
+      colliders.push({ x0: wx - 0.6, z0: wz - 0.45, x1: wx + 0.7, z1: wz + 0.45 });
+    })();
+    // flour sacks by the bread stall
+    [[-6.5, 0.6], [-6.9, 0.9]].forEach(function (p) {
+      scene.add(blobMesh(ps1Material(PS1.solidTexture(232, 228, 218)), p[0], 0.26, p[1], 0.3, 1.0, 0.25, function () { return [1, 1, 0.98]; }));
+    });
+    // bell on the NE house gable
+    (function () {
+      scene.add(boxMesh(matBeam, 5.5, 7.0, -14.2, 0.5, 0.35, 0.5, 1.4));
+      scene.add(prismMesh(matIron7, 5.5, -14.2, 0.16, 0.3, 8, 1.4, 0.5, null, 6.5));
+    })();
+    // extra vertical banners on the N house eaves
+    [[-4.5, -11.5], [6.0, -11.6]].forEach(function (b) {
+      scene.add(quadCorners(matBanner, [b[0], 4.0, b[1]], [b[0] + 0.5, 4.0, b[1]],
+        [b[0] + 0.5, 2.6, b[1]], [b[0], 2.6, b[1]], 0.6, 1.6));
+    });
+    // candles on the fabric stall counter
+    [[4.2, 1.1, 5.4], [4.8, 1.1, 5.9], [5.4, 1.1, 5.4]].forEach(function (c) {
+      scene.add(boxMesh(matBeam, c[0], c[1] + 0.06, c[2], 0.06, 0.14, 0.06, 2));
+      scene.add(boxMesh(matCoal, c[0], c[1] + 0.16, c[2], 0.025, 0.05, 0.025, 2, 0, [1.7, 1.2, 0.5]));
+    });
+    // pitchfork in the hay
+    scene.add(boxMesh(matBeam, 10.4, 0.55, -8.35, 0.05, 1.7, 0.05, 2, 0.3));
+    scene.add(boxMesh(matIron7, 10.4, 1.42, -8.3, 0.04, 0.3, 0.04, 2, 0.35));
+    scene.add(boxMesh(matIron7, 10.34, 1.5, -8.36, 0.16, 0.04, 0.04, 2, 0.35));
+    // entrance signboard at the south gap
+    (function () {
+      scene.add(cs(boxMesh(matBeam, -1.3, 0.8, 11.9, 0.1, 1.6, 0.1, 2)));
+      scene.add(cs(boxMesh(matBeam, 1.3, 0.8, 11.9, 0.1, 1.6, 0.1, 2)));
+      scene.add(boxMesh(matBeam, 0, 1.35, 11.9, 2.9, 0.55, 0.07, 1.6));
+    })();
+
     // ---------------- v6 detail pass ------------------------------------
     // crate stacks beside the stalls
     var matIron = ps1Material(PS1.solidTexture(54, 56, 62));
@@ -2898,12 +3137,12 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       scene: scene,
       colliders: colliders,
       bounds: { x0: -11.6, x1: 11.6, z0: -10.8, z1: 13.4 },
-      spawn: [-1.6, 13.0, Math.atan2(-(1.2 - -1.6), -(-3.5 - 13.0)), 0.0],
-      idle: { pos: [-1.6, 1.62, 13.4], target: [1.2, 1.6, -3.5] },
+      spawn: [-1.6, 13.0, Math.atan2(-(0.6 - -1.6), -(-2.5 - 13.4)), 0.0],
+      idle: { pos: [-1.6, 3.6, 14.6], target: [0.6, 0.9, -2.5] },   // elevated diorama shot: stalls/awning stripes/fountain/cart all readable
       fog: { color: [0.58, 0.44, 0.33], near: 28, far: 66 },
       noFlicker: true,
       blobGroup: decals.blobGroup,
-      particles: [dust, smoke],
+      particles: [dust, smoke].concat(braziers),
       update: function (t) {
         waterTex.offset.x = t * 0.03;
         waterTex.offset.y = -t * 0.05;
@@ -2915,6 +3154,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
           p.position.y = Math.max(0, Math.sin(t * 2.2 + ph)) * 0.05;
           p.rotation.x = Math.max(0, Math.sin(t * 1.1 + ph * 2)) * 0.5;   // pecking
         });
+        matCoal.uniforms.uFlicker.value = 0.85 + 0.15 * Math.sin(t * 19.0) * Math.sin(t * 6.7);
         chickens.forEach(function (c) {
           var ph = c.userData.ph;
           c.position.y = Math.max(0, Math.sin(t * 3.1 + ph)) * 0.04;
@@ -3134,7 +3374,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     { x: 3.8, y: 5.5, z: -2.0, col: [1.05, 0.22, 0.95], k: 4.6 },
     { x: 3.8, y: 4.5, z: 5.0, col: [0.16, 1.05, 1.15], k: 5.0 },
     { x: -3.8, y: 3.5, z: -6.0, col: [1.05, 0.9, 0.2], k: 3.8 },
-    { x: 0, y: 2.6, z: -12.0, col: [1.1, 0.55, 0.2], k: 3.6 }    // far warm glow
+    { x: 0, y: 2.8, z: -12.0, col: [1.15, 0.6, 0.24], k: 5.2 }    // far warm glow
   ];
   var MOON = new THREE.Vector3(-0.2, 0.75, 0.35).normalize();
 
@@ -3236,7 +3476,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     neonSign(-4.28, 3.3, -6.0, matNeon24, 1.35, 2.4, false);
     // horizontal neon tube high on the W wall + far-end glow panel
     scene.add(boxMesh(matTube, -4.1, 2.9, -13.0, 0.06, 0.10, 3.4, 2, 0, [0.5, 1.5, 1.6]));
-    scene.add(boxMesh(PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 150, 60))), 0, 2.4, -19.5, 5.0, 2.6, 0.2, 2, 0, [0.85, 0.5, 0.22]));
+    scene.add(boxMesh(PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 150, 60))), 0, 2.6, -19.5, 5.4, 3.4, 0.2, 2, 0, [1.05, 0.62, 0.28]));
 
     // vending machines
     [[-3.75, 0.5, 1], [3.75, -10.0, -1]].forEach(function (v, i) {
@@ -3283,6 +3523,102 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       void ci;
     });
 
+
+
+    // ---------------- v7 atmosphere + props -----------------------------
+    // scrolling marquee sign (animated texture offset)
+    var marqueeTex = texFrom(pixelLoop(newCanvas(64), function (x, y) {
+      if (x < 3 || x > 60 || y < 18 || y > 45) {
+        var t = (hash2(x, y) * 2 - 1) * 5;
+        return [16 + t, 16 + t, 19 + t];
+      }
+      var seg = Math.floor(x / 8);
+      var dash = (Math.floor(y / 6) % 2 === 0) !== (seg % 2 === 0);
+      if (dash && y > 24 && y < 40) return [70, 225, 235];
+      return [8, 12, 14];
+    }));
+    var matMarquee = ps1Material(marqueeTex);
+    scene.add(cs(boxMesh(matMetal, -4.1, 5.9, 4.2, 0.16, 0.6, 2.6, 1.4)));
+    scene.add(quadMesh(matMarquee, -4.01, 5.9, 4.2, 1, 0, 0, 2.35, 0.46, 1, 1));
+    // string lights across the alley (two catenaries, warm bulbs)
+    var matBulbStr = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 210, 140)));
+    function lightString(z, y0) {
+      for (var sg = 0; sg < 6; sg++) {
+        var x0 = -4.2 + 8.4 * sg / 6, x1 = -4.2 + 8.4 * (sg + 1) / 6;
+        var ym = y0 - 0.35 * Math.sin(Math.PI * (sg + 0.5) / 6);
+        scene.add(boxMesh(matMetal, (x0 + x1) / 2, ym, z, x1 - x0 + 0.02, 0.02, 0.02, 4, 0, [0.05, 0.05, 0.06]));
+      }
+      for (var b = 0; b < 7; b++) {
+        var t = b / 6;
+        scene.add(boxMesh(matBulbStr, -4.2 + 8.4 * t, y0 - 0.35 * Math.sin(Math.PI * t) - 0.06, z, 0.07, 0.09, 0.07, 2, 0, [1.6, 1.25, 0.65]));
+      }
+    }
+    lightString(9.5, 4.35); lightString(1.0, 4.15);
+    // cat eyes blinking in the stoop doorway
+    var matCatEye = PS1.privateFlicker(ps1Material(PS1.solidTexture(190, 235, 130)));
+    scene.add(boxMesh(matCatEye, -4.14, 0.42, 12.15, 0.02, 0.025, 0.015, 2, 0, [1.4, 1.7, 0.9]));
+    scene.add(boxMesh(matCatEye, -4.14, 0.42, 12.45, 0.02, 0.025, 0.015, 2, 0, [1.4, 1.7, 0.9]));
+    // cyber-yellow fire hydrant
+    scene.add(cs(prismMesh(ps1Material(PS1.solidTexture(215, 185, 40)), 3.3, -12.6, 0.14, 0.55, 6, 1.5, 0.8)));
+    scene.add(cs(boxMesh(ps1Material(PS1.solidTexture(215, 185, 40)), 3.3, 0.6, -12.6, 0.3, 0.12, 0.3, 1.5)));
+    // locker row against the west wall
+    (function () {
+      var matLocker = ps1Material(PS1.solidTexture(70, 76, 84));
+      for (var l = 0; l < 3; l++) {
+        scene.add(cs(boxMesh(matLocker, -3.85, 0.9, -14.6 + l * 0.5, 0.45, 1.8, 0.46, 1.4)));
+        scene.add(boxMesh(matMetal, -3.62, 1.1, -14.6 + l * 0.5, 0.02, 0.3, 0.06, 2));
+      }
+      colliders.push({ x0: -4.1, z0: -14.95, x1: -3.6, z1: -13.0 });
+    })();
+    // big caged wall fan
+    (function () {
+      var fan = prismMesh(matMetal, 0, 0, 0.8, 0.12, 8, 2.4, 0.5, null, 0);
+      fan.rotation.y = Math.PI / 2;
+      fan.position.set(4.14, 6.2, -5.5);
+      scene.add(fan);
+      for (var bar = 0; bar < 3; bar++) {
+        scene.add(boxMesh(matMetal, 4.06, 6.2, -5.5 - 0.5 + bar * 0.5, 0.04, 1.3, 0.05, 2, 0, [0.16, 0.17, 0.19]));
+      }
+    })();
+    // two more cable catenaries + transformer on the pole
+    [[6.4, -10.5], [5.0, 7.0]].forEach(function (cab) {
+      var y = cab[0], z = cab[1];
+      for (var sg = 0; sg < 4; sg++) {
+        var xa = -4.2 + 8.4 * sg / 4, xb = -4.2 + 8.4 * (sg + 1) / 4;
+        var ym = y - 0.45 * Math.sin(Math.PI * (sg + 0.5) / 4);
+        scene.add(boxMesh(matMetal, (xa + xb) / 2, ym, z, xb - xa + 0.02, 0.026, 0.026, 4, 0, [0.04, 0.04, 0.05]));
+      }
+    });
+    scene.add(cs(boxMesh(matMetal, 5.9, 5.1, -2, 0.6, 0.55, 0.45, 1.3)));
+    scene.add(prismMesh(matMetal, 5.9, -2.35, 0.05, 0.16, 6, 1, 0.4, null, 5.35));
+    scene.add(prismMesh(matMetal, 5.9, -1.65, 0.05, 0.16, 6, 1, 0.4, null, 5.35));
+    // newspaper box
+    scene.add(cs(boxMesh(matMetal, -3.9, 0.5, 11.8, 0.5, 0.9, 0.4, 1.3)));
+    scene.add(boxMesh(ps1Material(PS1.solidTexture(210, 205, 195)), -3.64, 0.62, 11.8, 0.02, 0.35, 0.26, 2, 0, [0.8, 0.78, 0.72]));
+    colliders.push({ x0: -4.2, z0: 11.5, x1: -3.6, z1: 12.1 });
+    // dumpster near the south entrance
+    (function () {
+      var matDump = ps1Material(PS1.solidTexture(40, 78, 58));
+      scene.add(cs(boxMesh(matDump, 3.4, 0.65, 14.6, 1.3, 1.2, 0.85, 1.4)));
+      scene.add(cs(boxMesh(matDump, 3.4, 1.32, 14.6, 1.36, 0.12, 0.9, 1.4, 0.06)));
+      colliders.push({ x0: 2.7, z0: 14.1, x1: 4.1, z1: 15.1 });
+    })();
+    // second steam vent mid-alley
+    scene.add(boxMesh(matMetal, -1.8, 0.02, -13.5, 0.9, 0.05, 0.6, 1.5));
+    var steam2 = PS1.makeParticles({
+      mode: 'steam', count: 70, color: [0.36, 0.38, 0.45],
+      size: 0.05, speed: 0.85, sway: 0.2,
+      area: [-2.25, -1.35, -13.9, -13.1, 2.6]
+    });
+    scene.add(steam2);
+    // extra graffiti + puddles
+    decals.wall(-4.16, 1.2, 6.9, true, 1.0, 0.4, PS1.decalMaterial(0.2, 0.7, 0.3, 0.4));
+    decals.wall(4.16, 1.1, -9.8, true, 0.9, 0.45, PS1.decalMaterial(0.85, 0.5, 0.1, 0.4));
+    decals.oct(-0.8, -6.4, 0.9, PS1.decalMaterial(0.04, 0.04, 0.07, 0.6), 0.004, 96);
+    decals.oct(1.0, 9.8, 0.7, PS1.decalMaterial(0.05, 0.05, 0.085, 0.55), 0.004, 97);
+    // roof antenna
+    scene.add(cs(boxMesh(matMetal, -4.0, 12.4, 12.8, 0.05, 1.6, 0.05, 2)));
+    scene.add(boxMesh(matMetal, -4.0, 13.3, 12.8, 0.6, 0.04, 0.04, 2));
 
     // ---------------- v6 detail pass ------------------------------------
     // posters + graffiti (Bayer-dithered colour patches on the walls)
@@ -3389,13 +3725,16 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       fog: { color: [0.105, 0.085, 0.15], near: 7, far: 38 },
       noFlicker: true,
       blobGroup: decals.blobGroup,
-      particles: [rain, steam],
+      particles: [rain, steam, steam2],
       update: function (t) {
         // the noodle sign has a bad ballast
         var f = (Math.sin(t * 31.7) > 0.92 || Math.sin(t * 7.3) > 0.995) ? 0.25 : 0.92 + 0.08 * Math.sin(t * 47);
         matNeonMen.uniforms.uFlicker.value = f;
         matTube.uniforms.uFlicker.value = 0.9 + 0.1 * Math.sin(t * 13.3);
         matStripA.uniforms.uFlicker.value = Math.sin(t * 17.3) > 0.7 ? 0.2 : (0.8 + 0.2 * Math.sin(t * 5.1));
+        marqueeTex.offset.x = -t * 0.22;
+        matBulbStr.uniforms.uFlicker.value = 0.88 + 0.12 * Math.sin(t * 11.3) * Math.sin(t * 2.9);
+        matCatEye.uniforms.uFlicker.value = ((t * 0.21) % 1 < 0.86) ? 1 : 0.05;
       }
     };
   });

@@ -449,6 +449,7 @@
       uSunCut: { value: cfg.sunCut || 0.9985 },
       uSunGlow: { value: cfg.sunGlow || 0 },
       uStars: { value: cfg.stars || 0 },
+      uMeteors: { value: cfg.meteors || 0 },
       uTime: shared.uTime,
       uBayer: shared.uBayer
     };
@@ -466,7 +467,7 @@
       fragmentShader: [
         'uniform vec3 uTop, uHorizon, uBottom, uSunCol;',
         'uniform vec3 uSunDir;',
-        'uniform float uSunCut, uSunGlow, uStars, uTime;',
+        'uniform float uSunCut, uSunGlow, uStars, uMeteors, uTime;',
         'uniform sampler2D uBayer;',
         'varying vec3 vDir;',
         'float h31(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }',
@@ -481,6 +482,19 @@
         '    float st = h31(sp);',
         '    float star = step(0.9982, st) * uStars * smoothstep(0.03, 0.25, d.y);',
         '    col += star * (0.55 + 0.45 * sin(uTime * 2.5 + st * 90.0));',
+        '  }',
+        '  if (uMeteors > 0.0) {',                       // one shooting star every ~9 s
+        '    float cyc = floor(uTime / 9.0);',
+        '    float ph = fract(uTime / 9.0);',
+        '    float mu = 0.4 + h31(vec3(cyc, 7.0, 3.0)) * 1.8;',
+        '    float mv = 0.45 + h31(vec3(cyc, 9.0, 1.0)) * 0.35;',
+        '    if (ph < 0.09) {',
+        '      float p = ph / 0.09;',
+        '      float du = atan(d.z, d.x) - (mu + 0.7 * p);',
+        '      du = mod(du + 3.14159, 6.2832) - 3.14159;',
+        '      float dv = d.y - (mv - 0.22 * p);',
+        '      col += vec3(0.85, 0.9, 1.0) * exp(-(du*du + dv*dv) * 700.0) * (1.0 - p) * uMeteors * step(0.15, d.y);',
+        '    }',
         '  }',
         '  float b = texture2D(uBayer, (floor(mod(gl_FragCoord.xy, 4.0)) + 0.5) / 4.0).r;',
         '  col = clamp(col + (b - 0.5) * (1.5 / 32.0), 0.0, 1.0);',

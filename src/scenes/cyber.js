@@ -206,7 +206,7 @@
     { x: 3.8, y: 5.5, z: -2.0, col: [1.05, 0.22, 0.95], k: 4.6 },
     { x: 3.8, y: 4.5, z: 5.0, col: [0.16, 1.05, 1.15], k: 5.0 },
     { x: -3.8, y: 3.5, z: -6.0, col: [1.05, 0.9, 0.2], k: 3.8 },
-    { x: 0, y: 2.6, z: -12.0, col: [1.1, 0.55, 0.2], k: 3.6 }    // far warm glow
+    { x: 0, y: 2.8, z: -12.0, col: [1.15, 0.6, 0.24], k: 5.2 }    // far warm glow
   ];
   var MOON = new THREE.Vector3(-0.2, 0.75, 0.35).normalize();
 
@@ -308,7 +308,7 @@
     neonSign(-4.28, 3.3, -6.0, matNeon24, 1.35, 2.4, false);
     // horizontal neon tube high on the W wall + far-end glow panel
     scene.add(boxMesh(matTube, -4.1, 2.9, -13.0, 0.06, 0.10, 3.4, 2, 0, [0.5, 1.5, 1.6]));
-    scene.add(boxMesh(PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 150, 60))), 0, 2.4, -19.5, 5.0, 2.6, 0.2, 2, 0, [0.85, 0.5, 0.22]));
+    scene.add(boxMesh(PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 150, 60))), 0, 2.6, -19.5, 5.4, 3.4, 0.2, 2, 0, [1.05, 0.62, 0.28]));
 
     // vending machines
     [[-3.75, 0.5, 1], [3.75, -10.0, -1]].forEach(function (v, i) {
@@ -355,6 +355,102 @@
       void ci;
     });
 
+
+
+    // ---------------- v7 atmosphere + props -----------------------------
+    // scrolling marquee sign (animated texture offset)
+    var marqueeTex = texFrom(pixelLoop(newCanvas(64), function (x, y) {
+      if (x < 3 || x > 60 || y < 18 || y > 45) {
+        var t = (hash2(x, y) * 2 - 1) * 5;
+        return [16 + t, 16 + t, 19 + t];
+      }
+      var seg = Math.floor(x / 8);
+      var dash = (Math.floor(y / 6) % 2 === 0) !== (seg % 2 === 0);
+      if (dash && y > 24 && y < 40) return [70, 225, 235];
+      return [8, 12, 14];
+    }));
+    var matMarquee = ps1Material(marqueeTex);
+    scene.add(cs(boxMesh(matMetal, -4.1, 5.9, 4.2, 0.16, 0.6, 2.6, 1.4)));
+    scene.add(quadMesh(matMarquee, -4.01, 5.9, 4.2, 1, 0, 0, 2.35, 0.46, 1, 1));
+    // string lights across the alley (two catenaries, warm bulbs)
+    var matBulbStr = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 210, 140)));
+    function lightString(z, y0) {
+      for (var sg = 0; sg < 6; sg++) {
+        var x0 = -4.2 + 8.4 * sg / 6, x1 = -4.2 + 8.4 * (sg + 1) / 6;
+        var ym = y0 - 0.35 * Math.sin(Math.PI * (sg + 0.5) / 6);
+        scene.add(boxMesh(matMetal, (x0 + x1) / 2, ym, z, x1 - x0 + 0.02, 0.02, 0.02, 4, 0, [0.05, 0.05, 0.06]));
+      }
+      for (var b = 0; b < 7; b++) {
+        var t = b / 6;
+        scene.add(boxMesh(matBulbStr, -4.2 + 8.4 * t, y0 - 0.35 * Math.sin(Math.PI * t) - 0.06, z, 0.07, 0.09, 0.07, 2, 0, [1.6, 1.25, 0.65]));
+      }
+    }
+    lightString(9.5, 4.35); lightString(1.0, 4.15);
+    // cat eyes blinking in the stoop doorway
+    var matCatEye = PS1.privateFlicker(ps1Material(PS1.solidTexture(190, 235, 130)));
+    scene.add(boxMesh(matCatEye, -4.14, 0.42, 12.15, 0.02, 0.025, 0.015, 2, 0, [1.4, 1.7, 0.9]));
+    scene.add(boxMesh(matCatEye, -4.14, 0.42, 12.45, 0.02, 0.025, 0.015, 2, 0, [1.4, 1.7, 0.9]));
+    // cyber-yellow fire hydrant
+    scene.add(cs(prismMesh(ps1Material(PS1.solidTexture(215, 185, 40)), 3.3, -12.6, 0.14, 0.55, 6, 1.5, 0.8)));
+    scene.add(cs(boxMesh(ps1Material(PS1.solidTexture(215, 185, 40)), 3.3, 0.6, -12.6, 0.3, 0.12, 0.3, 1.5)));
+    // locker row against the west wall
+    (function () {
+      var matLocker = ps1Material(PS1.solidTexture(70, 76, 84));
+      for (var l = 0; l < 3; l++) {
+        scene.add(cs(boxMesh(matLocker, -3.85, 0.9, -14.6 + l * 0.5, 0.45, 1.8, 0.46, 1.4)));
+        scene.add(boxMesh(matMetal, -3.62, 1.1, -14.6 + l * 0.5, 0.02, 0.3, 0.06, 2));
+      }
+      colliders.push({ x0: -4.1, z0: -14.95, x1: -3.6, z1: -13.0 });
+    })();
+    // big caged wall fan
+    (function () {
+      var fan = prismMesh(matMetal, 0, 0, 0.8, 0.12, 8, 2.4, 0.5, null, 0);
+      fan.rotation.y = Math.PI / 2;
+      fan.position.set(4.14, 6.2, -5.5);
+      scene.add(fan);
+      for (var bar = 0; bar < 3; bar++) {
+        scene.add(boxMesh(matMetal, 4.06, 6.2, -5.5 - 0.5 + bar * 0.5, 0.04, 1.3, 0.05, 2, 0, [0.16, 0.17, 0.19]));
+      }
+    })();
+    // two more cable catenaries + transformer on the pole
+    [[6.4, -10.5], [5.0, 7.0]].forEach(function (cab) {
+      var y = cab[0], z = cab[1];
+      for (var sg = 0; sg < 4; sg++) {
+        var xa = -4.2 + 8.4 * sg / 4, xb = -4.2 + 8.4 * (sg + 1) / 4;
+        var ym = y - 0.45 * Math.sin(Math.PI * (sg + 0.5) / 4);
+        scene.add(boxMesh(matMetal, (xa + xb) / 2, ym, z, xb - xa + 0.02, 0.026, 0.026, 4, 0, [0.04, 0.04, 0.05]));
+      }
+    });
+    scene.add(cs(boxMesh(matMetal, 5.9, 5.1, -2, 0.6, 0.55, 0.45, 1.3)));
+    scene.add(prismMesh(matMetal, 5.9, -2.35, 0.05, 0.16, 6, 1, 0.4, null, 5.35));
+    scene.add(prismMesh(matMetal, 5.9, -1.65, 0.05, 0.16, 6, 1, 0.4, null, 5.35));
+    // newspaper box
+    scene.add(cs(boxMesh(matMetal, -3.9, 0.5, 11.8, 0.5, 0.9, 0.4, 1.3)));
+    scene.add(boxMesh(ps1Material(PS1.solidTexture(210, 205, 195)), -3.64, 0.62, 11.8, 0.02, 0.35, 0.26, 2, 0, [0.8, 0.78, 0.72]));
+    colliders.push({ x0: -4.2, z0: 11.5, x1: -3.6, z1: 12.1 });
+    // dumpster near the south entrance
+    (function () {
+      var matDump = ps1Material(PS1.solidTexture(40, 78, 58));
+      scene.add(cs(boxMesh(matDump, 3.4, 0.65, 14.6, 1.3, 1.2, 0.85, 1.4)));
+      scene.add(cs(boxMesh(matDump, 3.4, 1.32, 14.6, 1.36, 0.12, 0.9, 1.4, 0.06)));
+      colliders.push({ x0: 2.7, z0: 14.1, x1: 4.1, z1: 15.1 });
+    })();
+    // second steam vent mid-alley
+    scene.add(boxMesh(matMetal, -1.8, 0.02, -13.5, 0.9, 0.05, 0.6, 1.5));
+    var steam2 = PS1.makeParticles({
+      mode: 'steam', count: 70, color: [0.36, 0.38, 0.45],
+      size: 0.05, speed: 0.85, sway: 0.2,
+      area: [-2.25, -1.35, -13.9, -13.1, 2.6]
+    });
+    scene.add(steam2);
+    // extra graffiti + puddles
+    decals.wall(-4.16, 1.2, 6.9, true, 1.0, 0.4, PS1.decalMaterial(0.2, 0.7, 0.3, 0.4));
+    decals.wall(4.16, 1.1, -9.8, true, 0.9, 0.45, PS1.decalMaterial(0.85, 0.5, 0.1, 0.4));
+    decals.oct(-0.8, -6.4, 0.9, PS1.decalMaterial(0.04, 0.04, 0.07, 0.6), 0.004, 96);
+    decals.oct(1.0, 9.8, 0.7, PS1.decalMaterial(0.05, 0.05, 0.085, 0.55), 0.004, 97);
+    // roof antenna
+    scene.add(cs(boxMesh(matMetal, -4.0, 12.4, 12.8, 0.05, 1.6, 0.05, 2)));
+    scene.add(boxMesh(matMetal, -4.0, 13.3, 12.8, 0.6, 0.04, 0.04, 2));
 
     // ---------------- v6 detail pass ------------------------------------
     // posters + graffiti (Bayer-dithered colour patches on the walls)
@@ -461,13 +557,16 @@
       fog: { color: [0.105, 0.085, 0.15], near: 7, far: 38 },
       noFlicker: true,
       blobGroup: decals.blobGroup,
-      particles: [rain, steam],
+      particles: [rain, steam, steam2],
       update: function (t) {
         // the noodle sign has a bad ballast
         var f = (Math.sin(t * 31.7) > 0.92 || Math.sin(t * 7.3) > 0.995) ? 0.25 : 0.92 + 0.08 * Math.sin(t * 47);
         matNeonMen.uniforms.uFlicker.value = f;
         matTube.uniforms.uFlicker.value = 0.9 + 0.1 * Math.sin(t * 13.3);
         matStripA.uniforms.uFlicker.value = Math.sin(t * 17.3) > 0.7 ? 0.2 : (0.8 + 0.2 * Math.sin(t * 5.1));
+        marqueeTex.offset.x = -t * 0.22;
+        matBulbStr.uniforms.uFlicker.value = 0.88 + 0.12 * Math.sin(t * 11.3) * Math.sin(t * 2.9);
+        matCatEye.uniforms.uFlicker.value = ((t * 0.21) % 1 < 0.86) ? 1 : 0.05;
       }
     };
   });

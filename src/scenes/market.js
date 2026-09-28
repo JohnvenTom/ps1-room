@@ -376,6 +376,89 @@
     });
 
 
+
+    // ---------------- v7 atmosphere + props -----------------------------
+    // fire braziers with living flame (steam-mode particles in orange)
+    var braziers = [];
+    var matCoal = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 150, 60)));
+    var matIron7 = ps1Material(PS1.solidTexture(54, 56, 62));
+    function brazier(x, z) {
+      [[-0.22, -0.13], [0.22, -0.13], [0, 0.26]].forEach(function (l) {
+        scene.add(cs(boxMesh(matIron7, x + l[0], 0.3, z + l[1], 0.06, 0.6, 0.06, 2, l[0] * 1.2)));
+      });
+      scene.add(cs(prismMesh(matIron7, x, z, 0.30, 0.22, 7, 1.8, 0.5, null, 0.58)));
+      scene.add(boxMesh(matCoal, x, 0.82, z, 0.36, 0.08, 0.36, 2, 0, [1.6, 0.8, 0.25]));
+      var flame = PS1.makeParticles({
+        mode: 'steam', count: 42, color: [1.0, 0.55, 0.16],
+        size: 0.045, speed: 1.5, sway: 0.1,
+        area: [x - 0.16, x + 0.16, z - 0.16, z + 0.16, 0.85]
+      });
+      scene.add(flame);
+      braziers.push(flame);
+      colliders.push({ x0: x - 0.35, z0: z - 0.35, x1: x + 0.35, z1: z + 0.35 });
+    }
+    brazier(-3.2, 1.9); brazier(3.8, -0.9);
+    // hanging shop sign on the NW house (bracket + carved board)
+    scene.add(cs(boxMesh(matBeam, -4.5, 3.4, -11.4, 0.85, 0.08, 0.08, 2)));
+    scene.add(boxMesh(matBeam, -4.15, 3.05, -11.4, 0.06, 0.6, 0.5, 2));
+    // spice sacks hanging on the stall backs
+    [[-0.9, 2.0, 1], [0, 2.15, 2], [0.8, 2.0, 3]].forEach(function (sp) {
+      var cols = [[188, 120, 50], [160, 60, 40], [90, 120, 60]];
+      var m = ps1Material(PS1.solidTexture(cols[sp[2] - 1][0], cols[sp[2] - 1][1], cols[sp[2] - 1][2]));
+      scene.add(PS1.blobMesh(m, -5.6 + sp[0], sp[1], -1.85, 0.13, 1.15, 0.25, function () { return [1.05, 1.0, 0.95]; }));
+    });
+    // sleeping dog by the bread stall
+    (function () {
+      var matDog = ps1Material(PS1.solidTexture(96, 66, 44));
+      scene.add(PS1.blobMesh(matDog, -5.05, 0.16, -0.2, 0.24, 0.62, 0.3, function () { return [1, 0.95, 0.9]; }));
+      scene.add(boxMesh(matDog, -5.3, 0.16, -0.1, 0.16, 0.14, 0.2, 2));
+      scene.add(boxMesh(matDog, -5.36, 0.35, -0.05, 0.04, 0.24, 0.04, 2, 0.7));
+    })();
+    // chicken coop + ramp
+    scene.add(PS1.blobMesh(matSack, 7.9, 0.35, 8.1, 0.45, 0.8, 0.35, function () { return [0.95, 0.9, 0.8]; }));
+    scene.add(boxMesh(matBeam, 7.35, 0.09, 8.1, 0.7, 0.06, 0.18, 2, 0.25));
+    // wheelbarrow
+    (function () {
+      var wx = -8.9, wz = 8.4;
+      var wheel = prismMesh(matBeam, 0, 0, 0.32, 0.09, 8, 1.4, 0.4, null, 0);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(wx, 0.32, wz);
+      scene.add(cs(wheel));
+      scene.add(cs(boxMesh(matBeam, wx + 0.35, 0.42, wz, 0.65, 0.4, 0.55, 1.4, 0.12)));
+      scene.add(boxMesh(matBeam, wx - 0.5, 0.42, wz - 0.18, 0.9, 0.06, 0.06, 2, 0.1));
+      scene.add(boxMesh(matBeam, wx - 0.5, 0.42, wz + 0.18, 0.9, 0.06, 0.06, 2, 0.1));
+      colliders.push({ x0: wx - 0.6, z0: wz - 0.45, x1: wx + 0.7, z1: wz + 0.45 });
+    })();
+    // flour sacks by the bread stall
+    [[-6.5, 0.6], [-6.9, 0.9]].forEach(function (p) {
+      scene.add(blobMesh(ps1Material(PS1.solidTexture(232, 228, 218)), p[0], 0.26, p[1], 0.3, 1.0, 0.25, function () { return [1, 1, 0.98]; }));
+    });
+    // bell on the NE house gable
+    (function () {
+      scene.add(boxMesh(matBeam, 5.5, 7.0, -14.2, 0.5, 0.35, 0.5, 1.4));
+      scene.add(prismMesh(matIron7, 5.5, -14.2, 0.16, 0.3, 8, 1.4, 0.5, null, 6.5));
+    })();
+    // extra vertical banners on the N house eaves
+    [[-4.5, -11.5], [6.0, -11.6]].forEach(function (b) {
+      scene.add(quadCorners(matBanner, [b[0], 4.0, b[1]], [b[0] + 0.5, 4.0, b[1]],
+        [b[0] + 0.5, 2.6, b[1]], [b[0], 2.6, b[1]], 0.6, 1.6));
+    });
+    // candles on the fabric stall counter
+    [[4.2, 1.1, 5.4], [4.8, 1.1, 5.9], [5.4, 1.1, 5.4]].forEach(function (c) {
+      scene.add(boxMesh(matBeam, c[0], c[1] + 0.06, c[2], 0.06, 0.14, 0.06, 2));
+      scene.add(boxMesh(matCoal, c[0], c[1] + 0.16, c[2], 0.025, 0.05, 0.025, 2, 0, [1.7, 1.2, 0.5]));
+    });
+    // pitchfork in the hay
+    scene.add(boxMesh(matBeam, 10.4, 0.55, -8.35, 0.05, 1.7, 0.05, 2, 0.3));
+    scene.add(boxMesh(matIron7, 10.4, 1.42, -8.3, 0.04, 0.3, 0.04, 2, 0.35));
+    scene.add(boxMesh(matIron7, 10.34, 1.5, -8.36, 0.16, 0.04, 0.04, 2, 0.35));
+    // entrance signboard at the south gap
+    (function () {
+      scene.add(cs(boxMesh(matBeam, -1.3, 0.8, 11.9, 0.1, 1.6, 0.1, 2)));
+      scene.add(cs(boxMesh(matBeam, 1.3, 0.8, 11.9, 0.1, 1.6, 0.1, 2)));
+      scene.add(boxMesh(matBeam, 0, 1.35, 11.9, 2.9, 0.55, 0.07, 1.6));
+    })();
+
     // ---------------- v6 detail pass ------------------------------------
     // crate stacks beside the stalls
     var matIron = ps1Material(PS1.solidTexture(54, 56, 62));
@@ -492,12 +575,12 @@
       scene: scene,
       colliders: colliders,
       bounds: { x0: -11.6, x1: 11.6, z0: -10.8, z1: 13.4 },
-      spawn: [-1.6, 13.0, Math.atan2(-(1.2 - -1.6), -(-3.5 - 13.0)), 0.0],
-      idle: { pos: [-1.6, 1.62, 13.4], target: [1.2, 1.6, -3.5] },
+      spawn: [-1.6, 13.0, Math.atan2(-(0.6 - -1.6), -(-2.5 - 13.4)), 0.0],
+      idle: { pos: [-1.6, 3.6, 14.6], target: [0.6, 0.9, -2.5] },   // elevated diorama shot: stalls/awning stripes/fountain/cart all readable
       fog: { color: [0.58, 0.44, 0.33], near: 28, far: 66 },
       noFlicker: true,
       blobGroup: decals.blobGroup,
-      particles: [dust, smoke],
+      particles: [dust, smoke].concat(braziers),
       update: function (t) {
         waterTex.offset.x = t * 0.03;
         waterTex.offset.y = -t * 0.05;
@@ -509,6 +592,7 @@
           p.position.y = Math.max(0, Math.sin(t * 2.2 + ph)) * 0.05;
           p.rotation.x = Math.max(0, Math.sin(t * 1.1 + ph * 2)) * 0.5;   // pecking
         });
+        matCoal.uniforms.uFlicker.value = 0.85 + 0.15 * Math.sin(t * 19.0) * Math.sin(t * 6.7);
         chickens.forEach(function (c) {
           var ph = c.userData.ph;
           c.position.y = Math.max(0, Math.sin(t * 3.1 + ph)) * 0.04;
