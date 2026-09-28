@@ -56,7 +56,7 @@
   }
   function waterCanvas() {
     return pixelLoop(newCanvas(64), function (x, y) {
-      var r = 24, g = 62, b = 62;
+      var r = 48, g = 96, b = 100;
       var w1 = Math.sin((x + Math.sin(y * 0.3) * 6) * 0.35);
       var w2 = Math.sin((y + Math.sin(x * 0.22) * 8) * 0.26 + 2.0);
       var k = 0.8 + 0.2 * w1 + 0.18 * w2;
