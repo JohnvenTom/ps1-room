@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>PS1 Room — 仿射纹理蠕动还原</title>
+<title>PS1 Scenes — 仿射纹理蠕动还原 · 五场景</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
@@ -23,12 +23,17 @@
   }
   .on  { color: #71ff71; }
   .off { color: #ff5f56; }
+  #fade {
+    position: fixed; inset: 0; background: #000; opacity: 0;
+    transition: opacity .24s ease; pointer-events: none; z-index: 5;
+  }
 </style>
 </head>
 <body>
 <canvas id="gl"></canvas>
+<div id="fade"></div>
 <div id="hud"></div>
-<div id="hint"><kbd>M</kbd> / click to roam &mdash; <kbd>W A S D</kbd> move &nbsp;<kbd>Shift</kbd> run &nbsp;mouse look (hold LMB to drag if unlocked) &nbsp;<kbd>Esc</kbd>/<kbd>M</kbd> exit<br><kbd>1</kbd> affine <kbd>2</kbd> vertex-snap <kbd>3</kbd> nearest <kbd>4</kbd> flicker <kbd>5</kbd> CRT <kbd>6</kbd> HUD <kbd>7</kbd> shadows &nbsp;<kbd>[</kbd><kbd>]</kbd> FOV (30&deg;&ndash;100&deg;) &mdash; idle mode: camera micro-drift, watch wall grout lines crawl</div>
+<div id="hint"><kbd>N</kbd> next scene &mdash; <kbd>M</kbd> / click to roam &mdash; <kbd>W A S D</kbd> move &nbsp;<kbd>Shift</kbd> run &nbsp;mouse look (hold LMB to drag if unlocked) &nbsp;<kbd>Esc</kbd>/<kbd>M</kbd> exit<br><kbd>1</kbd> affine <kbd>2</kbd> vertex-snap <kbd>3</kbd> nearest <kbd>4</kbd> flicker <kbd>5</kbd> CRT <kbd>6</kbd> HUD <kbd>7</kbd> shadows <kbd>8</kbd> fog <kbd>9</kbd> particles &nbsp;<kbd>[</kbd><kbd>]</kbd> FOV (30&deg;&ndash;100&deg;) &mdash; idle mode: camera micro-drift, watch textures crawl</div>
 <script>
 void 0,
 /**
@@ -42,21 +47,25 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 <script>
 (function () {
   'use strict';
+  var PS1 = window.PS1 = {};
 
   // ============================== config ==============================
   var IW = 320, IH = 240;                     // PS1-era internal framebuffer
-  var state = { affine: false, snap: true, nearest: true, crt: true, hud: true, flicker: true, shadow: true, fov: 55.4 };
-  var LAMP = new THREE.Vector3(0, 2.42, 0);   // hanging bulb = the light source
+  var state = {
+    affine: false, snap: true, nearest: true, crt: true, hud: true,
+    flicker: true, shadow: true, fog: true, particles: true, fov: 55.4
+  };
   var EYE = 1.62, RADIUS = 0.35;
+  PS1.state = state;
+  PS1.EYE = EYE; PS1.RADIUS = RADIUS;
 
-  // ========================= procedural textures ======================
+  // ========================= rand / noise =============================
   function hash2(x, y) {
     var n = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263)) | 0;
     n = Math.imul(n ^ (n >>> 13), 1274126177);
     n ^= n >>> 16;
     return (n >>> 0) / 4294967296;
   }
-
   function vnoise(x, y, period, oct) {
     var total = 0, amp = 1, freq = 1, norm = 0;
     for (var o = 0; o < (oct || 1); o++) {
@@ -71,177 +80,22 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     }
     return total / norm;
   }
+  PS1.hash2 = hash2;
+  PS1.vnoise = vnoise;
 
-  function newCanvas() {
-    var c = document.createElement('canvas'); c.width = c.height = 64; return c;
-  }
+  // ==================== procedural texture kit ========================
+  var ALLTEX = [];
+  function newCanvas(n) { var c = document.createElement('canvas'); c.width = c.height = n; return c; }
   function pixelLoop(c, fn) {
-    var g = c.getContext('2d'), img = g.createImageData(64, 64), d = img.data;
-    for (var y = 0; y < 64; y++) for (var x = 0; x < 64; x++) {
+    var n = c.width, g = c.getContext('2d'), img = g.createImageData(n, n), d = img.data;
+    for (var y = 0; y < n; y++) for (var x = 0; x < n; x++) {
       var col = fn(x, y);
-      var i = (y * 64 + x) * 4;
+      var i = (y * n + x) * 4;
       d[i] = col[0]; d[i + 1] = col[1]; d[i + 2] = col[2]; d[i + 3] = 255;
     }
     g.putImageData(img, 0, 0);
     return c;
   }
-
-  function floorCanvas() {
-    return pixelLoop(newCanvas(), function (x, y) {
-      var a = x + y, b = x - y + 64;
-      var ca = Math.floor(a / 16), cb = Math.floor(b / 16);
-      var da = a - ca * 16, db = b - cb * 16;
-      var base = ((ca + cb) & 1) ? [86, 84, 78] : [150, 148, 138];
-      var tint = (hash2(((ca % 4) + 4) % 4, cb % 4) * 2 - 1) * 9;
-      var r = base[0] + tint, g = base[1] + tint, b2 = base[2] + tint;
-      var edge = Math.min(da, db);
-      if (edge < 2) {
-        var k = edge < 1 ? 1 : 0.5;
-        r += (44 - r) * k; g += (42 - g) * k; b2 += (38 - b2) * k;
-      }
-      var sp = hash2(x, y);
-      if (sp < 0.12) { var q = 0.80 + sp * 0.5; r *= q; g *= q; b2 *= q; }
-      var st = vnoise(x / 16, y / 16, 4, 2);
-      if (st > 0.60) { var n = (st - 0.60) * 1.9; r *= 1 - n; g *= 1 - n * 0.95; b2 *= 1 - n * 0.85; }
-      return [r, g, b2];
-    });
-  }
-
-  function wallCanvas() {
-    return pixelLoop(newCanvas(), function (x, y) {
-      var row = Math.floor(y / 16);
-      var x2 = x + (row & 1) * 16;
-      var col = Math.floor(x2 / 32), cx = x2 - col * 32;
-      var tint = (hash2(col % 2, row * 7 + 3) * 2 - 1) * 11;
-      var r = 122 + tint, g = 118 + tint, b = 110 + tint;
-      var ry = y - row * 16;
-      if (ry < 1 || cx < 1) { r = 64 + tint * 0.4; g = 62 + tint * 0.4; b = 58 + tint * 0.4; }
-      else if (ry === 1 || cx === 1) { r *= 0.8; g *= 0.8; b *= 0.8; }
-      var ci = Math.floor(x / 4);
-      var k = hash2(((ci % 16) + 16) % 16, 7);
-      if (k < 0.30) {
-        var xc = ci * 4 + 2 + Math.sin(y * 0.18 + ci * 2.3) * 1.4;
-        var dx = x - xc; dx -= 64 * Math.round(dx / 64);
-        var fall = Math.max(0, 1 - Math.abs(dx) / 2.2) * Math.pow(y / 64, 1.6) * 0.30 * (0.4 + k * 2);
-        r *= 1 - fall; g *= 1 - fall; b *= 1 - fall * 0.9;
-      }
-      var sp = hash2(x + 91, y + 17);
-      if (sp < 0.10) { r *= 0.86; g *= 0.86; b *= 0.86; }
-      return [r, g, b];
-    });
-  }
-
-  function woodCanvas() {
-    return pixelLoop(newCanvas(), function (x, y) {
-      var row = Math.floor(y / 16), ry = y - row * 16;
-      var tint = (hash2(row, 5) * 2 - 1) * 14;
-      var r = 132 + tint, g = 96 + tint * 0.8, b = 56 + tint * 0.6;
-      if (ry < 1) { r = 52; g = 38; b = 24; }                       // plank seams
-      else if (ry === 1) { r *= 0.75; g *= 0.75; b *= 0.75; }
-      var grain = vnoise(x / 24, (y + row * 31) / 3.2, 8, 2);        // long grain streaks
-      if (grain > 0.62) { var n = (grain - 0.62) * 1.6; r *= 1 - n * 0.5; g *= 1 - n * 0.55; b *= 1 - n * 0.55; }
-      var nx = (x + 8 + row * 13) % 32, ny = ry;                     // nail heads at plank ends
-      if ((nx === 4 || nx === 28) && (ny === 5 || ny === 10)) { r = 70; g = 68; b = 66; }
-      var sp = hash2(x + 7, y + 3);
-      if (sp < 0.08) { r *= 0.8; g *= 0.8; b *= 0.8; }
-      return [r, g, b];
-    });
-  }
-
-  function barrelCanvas() {
-    return pixelLoop(newCanvas(), function (x, y) {
-      var tint = (hash2(Math.floor(x / 8), 11) * 2 - 1) * 6;
-      var r = 74 + tint, g = 86 + tint, b = 68 + tint;              // army-green paint
-      var band = (y === 6 || y === 7 || y === 30 || y === 31 || y === 54 || y === 55);
-      var rib = (y === 8 || y === 32 || y === 56);
-      if (band) { r = 48; g = 56; b = 46; }                          // hoop bands
-      else if (rib) { r = 110; g = 120; b = 100; }                   // hoop highlight edge
-      var rust = vnoise(x / 12, y / 12, 6, 2);                       // paint chips -> rust
-      if (rust > 0.68) { var n = Math.min(1, (rust - 0.68) * 3.2); r = r + (122 - r) * n; g = g + (66 - g) * n; b = b + (34 - b) * n; }
-      if ((y === 7 || y === 31) && x % 8 === 4) { r = 130; g = 134; b = 120; } // rivets
-      var sp = hash2(x + 41, y + 13);
-      if (sp < 0.10) { r *= 0.82; g *= 0.82; b *= 0.82; }
-      return [r, g, b];
-    });
-  }
-
-  function pipeCanvas() {
-    return pixelLoop(newCanvas(), function (x, y) {
-      var tint = (hash2(Math.floor(y / 32), 23) * 2 - 1) * 7;
-      var r = 92 + tint, g = 90 + tint, b = 86 + tint;              // dull grey metal
-      if (x === 0 || x === 32) { r = 50; g = 50; b = 48; }          // seam lines
-      if (x === 1 || x === 33) { r *= 1.18; g *= 1.18; b *= 1.18; } // seam weld highlight
-      if (x % 16 < 1 && y % 16 < 1) { r = 60; g = 60; b = 58; }     // flange bolts
-      var rust = vnoise(x / 14 + 3, y / 14, 5, 2);
-      if (rust > 0.70) { var n = Math.min(1, (rust - 0.70) * 3); r = r + (118 - r) * n; g = g + (64 - g) * n; b = b + (32 - b) * n; }
-      var sp = hash2(x + 5, y + 71);
-      if (sp < 0.10) { r *= 0.84; g *= 0.84; b *= 0.84; }
-      return [r, g, b];
-    });
-  }
-
-  function grilleCanvas() {
-    return pixelLoop(newCanvas(), function (x, y) {
-      var frame = (x < 3 || x > 60 || y < 3 || y > 60);
-      if (frame) { var t = (hash2(x, y) * 2 - 1) * 6; return [70 + t, 70 + t, 68 + t]; }
-      var slat = y % 8;
-      if (slat < 3) return [30, 30, 32];                             // open gap, near black
-      if (slat === 3) return [120, 118, 114];                        // slat highlight lip
-      var t2 = (hash2(x, y) * 2 - 1) * 8;
-      return [84 + t2, 82 + t2, 78 + t2];                            // slat face
-    });
-  }
-
-  function windowCanvas() {
-    return pixelLoop(newCanvas(), function (x, y) {
-      var r = 16, g = 16, b = 20;                                    // dark "night" glass
-      function board(bx, by) {
-        var t = (hash2(bx, by) * 2 - 1) * 12;
-        return [126 + t, 92 + t * 0.8, 54 + t * 0.6];
-      }
-      var d1 = (x + y * 0.55) % 64, d2 = (x - y * 0.62 + 40) % 64;   // two crossed boards
-      function band(d, c0, c1, w) {
-        var v = d - c0; if (v < 0) v += 64;
-        return v < w;
-      }
-      var on1 = band(x + Math.floor(y * 0.55), 10, 0, 13), on2 = band(x - Math.floor(y * 0.62) + 40, 30, 0, 12);
-      var wood = on1 ? board(1, 3) : (on2 ? board(2, 7) : null);
-      if (wood) {
-        var grain = vnoise(x / 20, y / 4, 8, 2);
-        var k = grain > 0.6 ? 0.82 : 1;
-        r = wood[0] * k; g = wood[1] * k; b = wood[2] * k;
-        if ((x + y * 2) % 23 < 2 && (x * 2 - y) % 19 < 2) { r = 60; g = 58; b = 56; } // nails
-      }
-      var sp = hash2(x + 3, y + 97);
-      if (sp < 0.06 && !wood) { r *= 1.8; g *= 1.8; b *= 1.8; }      // glass glint pixels
-      return [r, g, b];
-    });
-  }
-
-  function bookCanvas() {
-    return pixelLoop(newCanvas(), function (x, y) {
-      // 4 shelf rows; frame = dark wood; each row = vertical book spines
-      var row = Math.floor(y / 16), ry = y - row * 16;
-      var frame = (ry < 3) || (x % 32 < 2 && ry > 40);                // shelf board under each row
-      if (row === 0 && ry < 2) return [40, 30, 20];
-      if (frame) { var t = (hash2(x, row * 31) * 2 - 1) * 8; return [64 + t, 46 + t, 30 + t]; }
-      var slot = Math.floor(x / 3);
-      var k = hash2(slot, row * 7 + 3);
-      var top = 4 + Math.floor(k * 4);                                 // varied spine tops
-      if (ry < top) return [18, 16, 14];                                // gap above books -> shadow
-      var palette = [
-        [96, 40, 36], [52, 60, 88], [70, 82, 52], [104, 88, 48], [78, 52, 70], [58, 60, 62]
-      ];
-      var c = palette[Math.floor(k * 997) % palette.length];
-      var sh = 0.75 + hash2(slot * 3 + 1, row) * 0.5;                  // per-book brightness
-      var r = c[0] * sh, g = c[1] * sh, b = c[2] * sh;
-      if (hash2(slot, row * 13 + 9) < 0.22 && ry > 8 && ry < 11) { r *= 1.5; g *= 1.5; b *= 1.4; } // title band
-      if (x % 3 === 0 || x % 3 === 2 && hash2(slot + 5, row) < 0.5) { r *= 0.55; g *= 0.55; b *= 0.55; } // spine seams
-      if (k < 0.10) { r = 30; g = 28; b = 26; }                        // occasional empty slot
-      return [r, g, b];
-    });
-  }
-
   function texFrom(canvas) {
     var t = new THREE.CanvasTexture(canvas);
     t.magFilter = THREE.NearestFilter;
@@ -250,17 +104,23 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     t.generateMipmaps = false;
     t.colorSpace = THREE.LinearSRGBColorSpace;
     t.needsUpdate = true;
+    ALLTEX.push(t);
     return t;
   }
-  function whiteTexture() {
-    var t = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat);
+  function solidTexture(r, g, b) {
+    var t = new THREE.DataTexture(new Uint8Array([r, g, b, 255]), 1, 1, THREE.RGBAFormat);
     t.magFilter = t.minFilter = THREE.NearestFilter;
     t.colorSpace = THREE.LinearSRGBColorSpace;
     t.needsUpdate = true;
+    ALLTEX.push(t);
     return t;
   }
+  PS1.newCanvas = newCanvas;
+  PS1.pixelLoop = pixelLoop;
+  PS1.texFrom = texFrom;
+  PS1.solidTexture = solidTexture;
 
-  function bayerTexture() {
+  var bayerTex = (function () {
     var M = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
     var data = new Uint8Array(16 * 4);
     for (var i = 0; i < 16; i++) {
@@ -273,19 +133,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     t.colorSpace = THREE.LinearSRGBColorSpace;
     t.needsUpdate = true;
     return t;
-  }
-
-  var floorTex = texFrom(floorCanvas());
-  var wallTex = texFrom(wallCanvas());
-  var woodTex = texFrom(woodCanvas());
-  var barrelTex = texFrom(barrelCanvas());
-  var pipeTex = texFrom(pipeCanvas());
-  var grilleTex = texFrom(grilleCanvas());
-  var windowTex = texFrom(windowCanvas());
-  var bookTex = texFrom(bookCanvas());
-  var whiteTex = whiteTexture();
-  var allTex = [floorTex, wallTex, woodTex, barrelTex, pipeTex, grilleTex, windowTex, bookTex, whiteTex];
-  var bayerTex = bayerTexture();
+  })();
 
   // ============================ PS1 shaders ===========================
   var ROOM_VS = [
@@ -297,10 +145,13 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     'varying vec3 vAff;',        // (uv * w, w): ratio interpolates AFFINELY
     'varying vec2 vUvP;',
     'varying vec3 vCol;',
+    'varying float vDist;',      // view-space distance for fog
     'void main() {',
     '  vUvP = uv;',
     '  vCol = color;',
-    '  vec4 clip = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+    '  vec4 view = modelViewMatrix * vec4(position, 1.0);',
+    '  vDist = -view.z;',
+    '  vec4 clip = projectionMatrix * view;',
     '  if (uSnap > 0.5) {',
     '    vec2 hs = uRes * 0.5;',
     '    vec2 px = clip.xy / clip.w * hs + hs;',
@@ -314,7 +165,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     '  vAff = vec3(uv * clip.w, clip.w);',
     '  gl_Position = clip;',
     '  vec3 transformedNormal = normalize(vec3(modelMatrix * vec4(normal, 0.0)));',
-    '  vec4 worldPosition = modelMatrix * vec4(position, 1.0);',   // supports swinging props (non-identity matrix)
+    '  vec4 worldPosition = modelMatrix * vec4(position, 1.0);',   // supports animated props (non-identity matrix)
     '  #include <shadowmap_vertex>',
     '}'
   ].join('\n');
@@ -329,9 +180,14 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     'uniform float uAffine;',
     'uniform float uFlicker;',
     'uniform float uShadow;',
+    'uniform vec3 uFogColor;',
+    'uniform float uFogNear;',
+    'uniform float uFogFar;',
+    'uniform float uFogOn;',
     'varying vec3 vAff;',
     'varying vec2 vUvP;',
     'varying vec3 vCol;',
+    'varying float vDist;',
     // hard point shadow with Bayer-dithered penumbra (depth window ~6cm world)
     'float psPointShadow( sampler2D smap, vec2 mapSize, float bias, vec4 sc, float cnear, float cfar, float bayer ) {',
     '  vec3 l2p = sc.xyz;',
@@ -341,6 +197,16 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     '  vec2 texelSize = vec2( 1.0 ) / ( mapSize * vec2( 4.0, 2.0 ) );',
     '  float stored = unpackRGBAToDepth( texture2D( smap, cubeToUV( bd3D, texelSize.y ) ) );',
     '  float soft = clamp( ( stored - dp ) / 0.006, 0.0, 1.0 );',
+    '  return soft > bayer ? 1.0 : 0.0;',
+    '}',
+    // hard directional (sun/moon) shadow, same Bayer penumbra language.
+    // bias convention matches psPointShadow: negative bias favour the lit side,
+    // so the fragment depth is offset by -bias before the comparison.
+    'float psDirShadow( sampler2D smap, vec4 sc, float bias, float bayer ) {',
+    '  vec3 pc = sc.xyz / sc.w;',
+    '  if ( pc.x < 0.001 || pc.x > 0.999 || pc.y < 0.001 || pc.y > 0.999 ) return 1.0;',
+    '  float stored = unpackRGBAToDepth( texture2D( smap, pc.xy ) );',
+    '  float soft = clamp( ( stored - pc.z - bias ) / 0.0035, 0.0, 1.0 );',
     '  return soft > bayer ? 1.0 : 0.0;',
     '}',
     'void main() {',
@@ -353,9 +219,17 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     '    vis = psPointShadow( pointShadowMap[ 0 ], ps.shadowMapSize, ps.shadowBias, vPointShadowCoord[ 0 ], ps.shadowCameraNear, ps.shadowCameraFar, b );',
     '  }',
     '  #endif',
+    '  #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0',
+    '  if (uShadow > 0.5) {',
+    '    DirectionalLightShadow ds = directionalLightShadows[ 0 ];',
+    '    vis = min( vis, psDirShadow( directionalShadowMap[ 0 ], vDirectionalShadowCoord[ 0 ], ds.shadowBias, b ) );',
+    '  }',
+    '  #endif',
     '  vec3 c = texture2D(uMap, u).rgb * vCol * uFlicker;',
     '  float dark = 0.35 + ( 1.0 - min( uFlicker, 1.0 ) ) * 0.55;',   // lamp dip -> shallower shadow
     '  c *= mix( dark, 1.0, vis );',
+    '  float fogF = uFogOn * smoothstep( uFogNear, uFogFar, vDist );',
+    '  c = mix( c, uFogColor, fogF );',
     '  c = clamp(c + (b - 0.5) * (1.5 / 32.0), 0.0, 1.0);',
     '  c = floor(c * 31.0 + 0.5) / 31.0;',
     '  gl_FragColor = vec4(c, 1.0);',
@@ -368,8 +242,14 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     uFlicker: { value: 1 },
     uShadow: { value: 1 },
     uRes: { value: new THREE.Vector2(IW, IH) },
-    uBayer: { value: bayerTex }
+    uBayer: { value: bayerTex },
+    uFogColor: { value: new THREE.Color(0.5, 0.5, 0.5) },
+    uFogNear: { value: 8 },
+    uFogFar: { value: 30 },
+    uFogOn: { value: 0 },
+    uTime: { value: 0 }
   };
+  PS1.shared = shared;
 
   function ps1Material(map) {
     var u = THREE.UniformsUtils.merge([THREE.UniformsLib.lights, {
@@ -379,7 +259,11 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       uSnap: { value: 1 },
       uFlicker: { value: 1 },
       uShadow: { value: 1 },
-      uRes: { value: null }
+      uRes: { value: null },
+      uFogColor: { value: null },
+      uFogNear: { value: 1 },
+      uFogFar: { value: 1 },
+      uFogOn: { value: 0 }
     }]);
     u.uMap.value = map;
     u.uBayer = shared.uBayer;
@@ -388,6 +272,10 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     u.uFlicker = shared.uFlicker;
     u.uShadow = shared.uShadow;
     u.uRes = shared.uRes;
+    u.uFogColor = shared.uFogColor;
+    u.uFogNear = shared.uFogNear;
+    u.uFogFar = shared.uFogFar;
+    u.uFogOn = shared.uFogOn;
     return new THREE.ShaderMaterial({
       uniforms: u,
       lights: true,
@@ -396,28 +284,25 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       side: THREE.DoubleSide
     });
   }
+  PS1.ps1Material = ps1Material;
 
-  var matFloor = ps1Material(floorTex);
-  var matWall = ps1Material(wallTex);
-  var matWood = ps1Material(woodTex);
-  var matBarrel = ps1Material(barrelTex);
-  var matPipe = ps1Material(pipeTex);
-  var matGrille = ps1Material(grilleTex);
-  var matWindow = ps1Material(windowTex);
-  var matBook = ps1Material(bookTex);
-  var matBulb = ps1Material(whiteTex);
-  var roomMats = [matFloor, matWall, matWood, matBarrel, matPipe, matGrille, matWindow, matBook, matBulb];
-
-  // ====================== light baking (vertex color) =================
-  function relight(x, y, z, nx, ny, nz) {
-    var dx = LAMP.x - x, dy = LAMP.y - y, dz = LAMP.z - z;
-    var d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    var fall = Math.max(0.20, Math.min(1.0, 1.55 - 0.21 * d));
-    var inv = d > 1e-4 ? 1 / d : 0;
-    var ndl = Math.max(0, (dx * nx + dy * ny + dz * nz) * inv);
-    var b = fall * (0.55 + 0.55 * ndl) + 0.06;
-    return Math.max(0.16, Math.min(1.0, b));
+  // give a ps1 material its own private uFlicker (for blinking neon etc.)
+  function privateFlicker(mat) {
+    mat.uniforms.uFlicker = { value: 1 };
+    return mat;
   }
+  PS1.privateFlicker = privateFlicker;
+
+  // ===================== light baking (vertex color) ==================
+  // Scenes assign this before building geometry; must return [r, g, b].
+  var RELIGHT = function (x, y, z, nx, ny, nz) { return [1, 1, 1]; };
+  function setRelight(fn) { RELIGHT = fn; }
+  PS1.setRelight = setRelight;
+  PS1.relight = function () { return RELIGHT.apply(null, arguments); };
+
+  // scalar helper: pack brightness into rgb triple
+  function shade(c) { return [c, c, c]; }
+  PS1.shade = shade;
 
   // ========================== geometry helpers ========================
   function geo(pos, uvs, cols, idx) {
@@ -429,28 +314,59 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     g.computeVertexNormals();   // real normals so shadow normalBias works
     return g;
   }
-  function shade(c) { return [c, c, c]; }
+  PS1.geo = geo;
 
-  function fanSurface(y, uvScale, material, normalY) {
-    var h = 4;
-    var pos = [-h, y, -h, h, y, -h, h, y, h, -h, y, h, 0, y, 0];
-    var uv = [0, 0, uvScale, 0, uvScale, uvScale, 0, uvScale, uvScale / 2, uvScale / 2];
-    var cols = [];
-    [[-h, y, -h], [h, y, -h], [h, y, h], [-h, y, h], [0, y, 0]].forEach(function (p) {
-      cols = cols.concat(shade(relight(p[0], p[1], p[2], 0, normalY, 0)));
-    });
-    return new THREE.Mesh(geo(pos, uv, cols, [0, 1, 4, 1, 2, 4, 2, 3, 4, 3, 0, 4]), material);
+  // subdivided ground grid: chunky Gouraud light pools, very PS1.
+  // uvScale = texture repeats per 2 world meters; ny = light normal (+1 floor / -1 ceiling)
+  function groundGrid(mat, cx, cz, w, d, segs, uvScale, y, ny) {
+    y = y || 0; ny = ny || 1;
+    var pos = [], uvs = [], cols = [], idx = [];
+    for (var j = 0; j <= segs; j++) for (var i = 0; i <= segs; i++) {
+      var x = cx - w / 2 + w * i / segs, z = cz - d / 2 + d * j / segs;
+      pos.push(x, y, z);
+      uvs.push(w * i / segs / 2 * uvScale, d * j / segs / 2 * uvScale);
+      var c = RELIGHT(x, y, z, 0, ny, 0);
+      cols.push(c[0], c[1], c[2]);
+    }
+    for (j = 0; j < segs; j++) for (i = 0; i < segs; i++) {
+      var a = j * (segs + 1) + i, b2 = a + 1, c2 = a + segs + 1, d2 = c2 + 1;
+      idx.push(a, c2, b2, b2, c2, d2);
+    }
+    var m = new THREE.Mesh(geo(pos, uvs, cols, idx), mat);
+    m.receiveShadow = true;
+    return m;
   }
+  PS1.groundGrid = groundGrid;
 
-  function wallSurface(p0, p1, p2, p3, uvScaleU, uvScaleV, nx, ny, nz) {
+  function wallSurface(mat, p0, p1, p2, p3, uvScaleU, uvScaleV, nx, ny, nz) {
     var pos = [].concat(p0, p1, p2, p3);
     var uv = [0, 0, uvScaleU, 0, uvScaleU, uvScaleV, 0, uvScaleV];
     var cols = [];
     [p0, p1, p2, p3].forEach(function (p) {
-      cols = cols.concat(shade(relight(p[0], p[1], p[2], nx, ny, nz)));
+      cols = cols.concat(RELIGHT(p[0], p[1], p[2], nx, ny, nz));
     });
-    return new THREE.Mesh(geo(pos, uv, cols, [0, 1, 2, 0, 2, 3]), matWall);
+    return new THREE.Mesh(geo(pos, uv, cols, [0, 1, 2, 0, 2, 3]), mat);
   }
+  PS1.wallSurface = wallSurface;
+
+  // generic quad from 4 corner points (order: bl, br, tr, tl), light from face normal
+  function quadCorners(mat, p0, p1, p2, p3, uvU, uvV) {
+    var ux = p1[0] - p0[0], uy = p1[1] - p0[1], uz = p1[2] - p0[2];
+    var vx = p3[0] - p0[0], vy = p3[1] - p0[1], vz = p3[2] - p0[2];
+    var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    var nl = Math.hypot(nx, ny, nz) || 1;
+    nx /= nl; ny /= nl; nz /= nl;
+    var pos = [].concat(p0, p1, p2, p3);
+    var uv = [0, 0, uvU, 0, uvU, uvV, 0, uvV];
+    var cols = [];
+    var ctr = [(p0[0] + p2[0]) / 2, (p0[1] + p2[1]) / 2, (p0[2] + p2[2]) / 2];
+    [p0, p1, p2, p3].forEach(function (p) {
+      cols = cols.concat(RELIGHT(p[0], p[1], p[2], nx, ny, nz));
+    });
+    void ctr;
+    return new THREE.Mesh(geo(pos, uv, cols, [0, 1, 2, 0, 2, 3]), mat);
+  }
+  PS1.quadCorners = quadCorners;
 
   // axis-aligned-ish box with optional Z rotation, per-vertex relit
   function boxMesh(material, cx, cy, cz, sx, sy, sz, uvScale, rotZ, emissive) {
@@ -474,46 +390,55 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         var uu = (Math.abs(f.n[2]) > 0.5) ? lx : (Math.abs(f.n[0]) > 0.5 ? lz : lx);
         var vv = (Math.abs(f.n[1]) > 0.5) ? lz : ly;
         uvs.push(uu * uvScale, vv * uvScale);
-        var b = emissive ? emissive : shade(relight(wx, wy, wz, nx, ny, nz));
-        cols.push(Array.isArray(b) ? b[0] : b, Array.isArray(b) ? b[1] : b, Array.isArray(b) ? b[2] : b);
+        var c = emissive ? emissive : RELIGHT(wx, wy, wz, nx, ny, nz);
+        cols.push(c[0], c[1], c[2]);
       });
       idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
     });
-    return new THREE.Mesh(geo(pos, uvs, cols, idx), material);
+    var m = new THREE.Mesh(geo(pos, uvs, cols, idx), material);
+    m.receiveShadow = true;
+    return m;
   }
+  PS1.boxMesh = boxMesh;
 
-  function prismMesh(material, cx, cz, r, h, sides, uvU, uvV, emissiveTop) {
+  // vertical prism (cylinder-ish), yBase lifts it off the floor
+  function prismMesh(material, cx, cz, r, h, sides, uvU, uvV, emissiveTop, yBase) {
+    yBase = yBase || 0;
     var pos = [], uvs = [], cols = [], idx = [];
     for (var i = 0; i < sides; i++) {
       var a0 = i / sides * Math.PI * 2, a1 = (i + 1) / sides * Math.PI * 2;
       var am = (a0 + a1) / 2;
       var nx = Math.cos(am), nz = Math.sin(am);
       var p = [
-        [cx + Math.cos(a0) * r, 0, cz + Math.sin(a0) * r],
-        [cx + Math.cos(a1) * r, 0, cz + Math.sin(a1) * r],
-        [cx + Math.cos(a1) * r, h, cz + Math.sin(a1) * r],
-        [cx + Math.cos(a0) * r, h, cz + Math.sin(a0) * r]
+        [cx + Math.cos(a0) * r, yBase, cz + Math.sin(a0) * r],
+        [cx + Math.cos(a1) * r, yBase, cz + Math.sin(a1) * r],
+        [cx + Math.cos(a1) * r, yBase + h, cz + Math.sin(a1) * r],
+        [cx + Math.cos(a0) * r, yBase + h, cz + Math.sin(a0) * r]
       ];
       var base = pos.length / 3;
       p.forEach(function (v, k) {
         pos.push(v[0], v[1], v[2]);
         uvs.push((k === 1 || k === 2 ? uvU : 0), (k >= 2 ? uvV : 0));
-        var b = relight(v[0], v[1], v[2], nx, 0, nz);
-        cols.push(b, b, b);
+        var c = RELIGHT(v[0], v[1], v[2], nx, 0, nz);
+        cols.push(c[0], c[1], c[2]);
       });
       idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
       // top cap fan
-      pos.push(cx, h, cz);
+      pos.push(cx, yBase + h, cz);
       uvs.push(0.5, 0.5);
-      cols.push(emissiveTop, emissiveTop, emissiveTop);
+      var tc = emissiveTop != null ? shade(emissiveTop) : RELIGHT(cx, yBase + h, cz, 0, 1, 0);
+      cols.push(tc[0], tc[1], tc[2]);
       var ci = pos.length / 3 - 1;
       idx.push(base, ci, base + 1);
     }
-    return new THREE.Mesh(geo(pos, uvs, cols, idx), material);
+    var m = new THREE.Mesh(geo(pos, uvs, cols, idx), material);
+    m.receiveShadow = true;
+    return m;
   }
+  PS1.prismMesh = prismMesh;
 
+  // wall-plane quad; tangent u/v derived from normal
   function quadMesh(material, cx, cy, cz, nx, ny, nz, w, h, uvW, uvH) {
-    // wall-plane quad; tangent u/v derived from normal
     var ux, uy, uz, vx, vy, vz;
     if (Math.abs(nx) > 0.5) { ux = 0; uy = 0; uz = 1; vx = 0; vy = 1; vz = 0; }
     else { ux = 1; uy = 0; uz = 0; vx = 0; vy = 1; vz = 0; }
@@ -524,96 +449,212 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       var x = cx + ux * p[0] + vx * p[1], y = cy + uy * p[0] + vy * p[1], z = cz + uz * p[0] + vz * p[1];
       pos.push(x, y, z);
       uvs.push((p[0] + hw) * uvW, (p[1] + hh) * uvH);
-      var b = relight(x, y, z, nx, ny, nz);
-      cols.push(b, b, b);
+      var c = RELIGHT(x, y, z, nx, ny, nz);
+      cols.push(c[0], c[1], c[2]);
     });
     return new THREE.Mesh(geo(pos, uvs, cols, [0, 1, 2, 0, 2, 3]), material);
   }
+  PS1.quadMesh = quadMesh;
 
-  // ============================ room assembly ==========================
-  function cs(m) { m.castShadow = true; return m; }   // shadow caster
-  var roomScene = new THREE.Scene();
-  roomScene.add(fanSurface(0, 4, matFloor, 1));
-  roomScene.add(fanSurface(3.2, 4, matWall, -1));
-  var H = 3.2;
-  roomScene.add(wallSurface([-4, 0, -4], [4, 0, -4], [4, H, -4], [-4, H, -4], 4, 1.6, 0, 0, 1));    // N
-  roomScene.add(wallSurface([-4, 0, 4], [-4, 0, -4], [-4, H, -4], [-4, H, 4], 4, 1.6, 1, 0, 0));    // W
-  roomScene.add(wallSurface([4, 0, -4], [4, 0, 4], [4, H, 4], [4, H, -4], 4, 1.6, -1, 0, 0));       // E
-  roomScene.add(wallSurface([4, 0, 4], [-4, 0, 4], [-4, H, 4], [4, H, 4], 4, 1.6, 0, 0, -1));       // S
-
-  // crates, NW corner (2 + 1 stack)
-  roomScene.add(cs(boxMesh(matWood, -2.60, 0.45, -3.40, 0.90, 0.90, 0.90, 1.1)));
-  roomScene.add(cs(boxMesh(matWood, -1.65, 0.40, -3.50, 0.80, 0.80, 0.80, 1.1)));
-  roomScene.add(cs(boxMesh(matWood, -2.55, 1.25, -3.35, 0.70, 0.70, 0.70, 1.2, 0.35)));
-  // oil drum, W wall
-  roomScene.add(cs(prismMesh(matBarrel, -3.35, -0.60, 0.38, 1.05, 8, 1.6, 1.0, 0.30)));
-  // pipes along W + N wall tops
-  roomScene.add(cs(boxMesh(matPipe, -3.74, 2.82, 0, 0.16, 0.16, 7.8, 1.3)));
-  roomScene.add(cs(boxMesh(matPipe, 0, 2.82, -3.74, 7.8, 0.16, 0.16, 1.3)));
-  roomScene.add(cs(boxMesh(matPipe, -3.74, 2.82, -3.74, 0.22, 0.22, 0.22, 1.3)));   // corner elbow
-  // vent grille on W wall under pipe end
-  roomScene.add(quadMesh(matGrille, -3.93, 2.15, -1.5, 1, 0, 0, 0.6, 0.6, 1, 1));
-  // boarded window on N wall (x 0.5..1.9, y 1.55..2.65)
-  roomScene.add(quadMesh(matWindow, 1.2, 2.10, -3.93, 0, 0, 1, 1.4, 1.1, 1, 1));
-  roomScene.add(cs(boxMesh(matWood, 1.20, 2.28, -3.86, 1.55, 0.16, 0.07, 1.4, 0.14)));
-  roomScene.add(cs(boxMesh(matWood, 1.20, 1.92, -3.86, 1.55, 0.16, 0.07, 1.4, -0.11)));
-  roomScene.add(cs(boxMesh(matWood, 0.85, 2.10, -3.86, 0.14, 1.05, 0.07, 1.4, 0.05)));
-  // hanging lamp at ceiling center: rod + shade cone + bulb disc
-  roomScene.add(cs(boxMesh(matPipe, 0, 3.02, 0, 0.06, 0.36, 0.06, 2.0)));
-  (function () {
-    var seg = 8, pos = [], uvs = [], cols = [], idx = [];
-    var apex = [0, 2.78, 0];
-    for (var i = 0; i <= seg; i++) {
-      var a = i / seg * Math.PI * 2;
-      var x = Math.cos(a) * 0.5, z = Math.sin(a) * 0.5, y = 2.42;
-      pos.push(x, y, z);
-      uvs.push(i / seg * 2, 0);
-      var b = relight(x, y, z, Math.cos(a), 0.4, Math.sin(a));
-      cols.push(b, b, b);
+  // jittered low-poly blob (tree canopies): per-vertex tint callback
+  function blobMesh(material, cx, cy, cz, r, stretch, jitter, tint) {
+    var g = new THREE.SphereGeometry(r, 6, 5);
+    var p = g.attributes.position, cols = [];
+    for (var i = 0; i < p.count; i++) {
+      var s = hash2(Math.round(p.getX(i) * 977), Math.round(p.getY(i) * 1231 + p.getZ(i) * 37));
+      var s2 = hash2(Math.round(p.getZ(i) * 769) + 31, Math.round(p.getX(i) * 577 + p.getY(i)));
+      var k = 1 + (s - 0.5) * jitter;
+      var x = p.getX(i) * k, y = p.getY(i) * k * stretch, z = p.getZ(i) * k;
+      p.setXYZ(i, x, y, z);
+      var wx = cx + x, wy = cy + y, wz = cz + z;
+      var c = RELIGHT(wx, wy, wz, x / r, Math.max(0.2, y / (r * stretch)), z / r);
+      if (tint) {
+        var tt = tint(s2, wy);
+        c = [c[0] * tt[0], c[1] * tt[1], c[2] * tt[2]];
+      }
+      cols.push(c[0], c[1], c[2]);
     }
-    pos.push(apex[0], apex[1], apex[2]); uvs.push(1, 1);
-    var bc = relight(apex[0], apex[1], apex[2], 0, 1, 0);
-    cols.push(bc, bc, bc);
-    var ai = pos.length / 3 - 1;
-    for (i = 0; i < seg; i++) idx.push(i, ai, i + 1);
-    roomScene.add(cs(new THREE.Mesh(geo(pos, uvs, cols, idx), matPipe)));
-  })();
-  (function () {
-    var seg = 8, pos = [], uvs = [], cols = [], idx = [];
-    pos.push(0, 2.40, 0); uvs.push(0.5, 0.5); cols.push(1.8, 1.55, 1.05);
-    for (var i = 0; i <= seg; i++) {
-      var a = i / seg * Math.PI * 2;
-      pos.push(Math.cos(a) * 0.13, 2.36, Math.sin(a) * 0.13);
-      uvs.push(0.5 + Math.cos(a) * 0.5, 0.5 + Math.sin(a) * 0.5);
-      cols.push(1.8, 1.55, 1.05);
-    }
-    for (i = 0; i < seg; i++) idx.push(0, i + 1, i + 2);
-    roomScene.add(new THREE.Mesh(geo(pos, uvs, cols, idx), matBulb));
-  })();
+    g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+    g.computeVertexNormals();
+    var m = new THREE.Mesh(g, material);
+    m.position.set(cx, cy, cz);
+    m.receiveShadow = true;
+    return m;
+  }
+  PS1.blobMesh = blobMesh;
 
-  // ===================== real-time point shadow ======================
-  // The custom PS1 shader ignores lighting equations; this light exists only
-  // to drive the shadow cube map. Intensity is visually irrelevant.
-  var lamp = new THREE.PointLight(0xffffff, 1);
-  lamp.position.copy(LAMP);
-  lamp.castShadow = true;
-  lamp.shadow.mapSize.set(256, 256);
-  lamp.shadow.camera.near = 0.15;
-  lamp.shadow.camera.far = 7;
-  lamp.shadow.bias = -0.004;
-  lamp.shadow.normalBias = 0.02;
-  roomScene.add(lamp);
+  PS1.cs = function (m) { m.castShadow = true; return m; };   // shadow caster
+
+  // ============================ sky dome ==============================
+  function makeSky(cfg) {
+    var u = {
+      uTop: { value: new THREE.Color().fromArray(cfg.top) },
+      uHorizon: { value: new THREE.Color().fromArray(cfg.horizon) },
+      uBottom: { value: new THREE.Color().fromArray(cfg.bottom || [0.05, 0.05, 0.06]) },
+      uSunDir: { value: new THREE.Vector3().fromArray(cfg.sunDir || [0, 1, 0]).normalize() },
+      uSunCol: { value: new THREE.Color().fromArray(cfg.sunCol || [0, 0, 0]) },
+      uSunCut: { value: cfg.sunCut || 0.9985 },
+      uSunGlow: { value: cfg.sunGlow || 0 },
+      uStars: { value: cfg.stars || 0 },
+      uTime: shared.uTime,
+      uBayer: shared.uBayer
+    };
+    var mat = new THREE.ShaderMaterial({
+      uniforms: u,
+      side: THREE.BackSide,
+      depthWrite: false,
+      vertexShader: [
+        'varying vec3 vDir;',
+        'void main() {',
+        '  vDir = position;',
+        '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+        '}'
+      ].join('\n'),
+      fragmentShader: [
+        'uniform vec3 uTop, uHorizon, uBottom, uSunCol;',
+        'uniform vec3 uSunDir;',
+        'uniform float uSunCut, uSunGlow, uStars, uTime;',
+        'uniform sampler2D uBayer;',
+        'varying vec3 vDir;',
+        'float h31(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }',
+        'void main() {',
+        '  vec3 d = normalize(vDir);',
+        '  vec3 col = mix(uHorizon, uTop, smoothstep(0.0, 0.55, d.y));',
+        '  col = mix(uBottom, col, smoothstep(-0.30, 0.02, d.y));',
+        '  float s = dot(d, uSunDir);',
+        '  col += uSunCol * (smoothstep(uSunCut, uSunCut + 0.0035, s) + uSunGlow * pow(max(s, 0.0), 24.0));',
+        '  if (uStars > 0.0) {',
+        '    vec3 sp = floor(d * 160.0);',
+        '    float st = h31(sp);',
+        '    float star = step(0.9982, st) * uStars * smoothstep(0.03, 0.25, d.y);',
+        '    col += star * (0.55 + 0.45 * sin(uTime * 2.5 + st * 90.0));',
+        '  }',
+        '  float b = texture2D(uBayer, (floor(mod(gl_FragCoord.xy, 4.0)) + 0.5) / 4.0).r;',
+        '  col = clamp(col + (b - 0.5) * (1.5 / 32.0), 0.0, 1.0);',
+        '  col = floor(col * 31.0 + 0.5) / 31.0;',
+        '  gl_FragColor = vec4(col, 1.0);',
+        '}'
+      ].join('\n')
+    });
+    var m = new THREE.Mesh(new THREE.SphereGeometry(cfg.radius || 90, 20, 12), mat);
+    m.frustumCulled = false;
+    m.userData.isSky = true;
+    return m;
+  }
+  PS1.makeSky = makeSky;
+
+  // ===================== particle systems =============================
+  // modes: petal (slow sway fall), rain (fast slanted streaks),
+  //        steam (rising fade), dust (slow golden drift)
+  function makeParticles(cfg) {
+    var count = cfg.count;
+    var pos = new Float32Array(count * 3), seed = new Float32Array(count * 3);
+    for (var i = 0; i < count; i++) {
+      seed[i * 3] = Math.random();
+      seed[i * 3 + 1] = Math.random();
+      seed[i * 3 + 2] = Math.random();
+      pos[i * 3] = 0; pos[i * 3 + 1] = -50; pos[i * 3 + 2] = 0;   // VS computes real position
+    }
+    var g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 3));
+    var u = {
+      uTime: shared.uTime,
+      uSnap: shared.uSnap,
+      uRes: shared.uRes,
+      uBayer: shared.uBayer,
+      uColor: { value: new THREE.Color().fromArray(cfg.color || [1, 1, 1]) },
+      uSize: { value: cfg.size || 2 },
+      uMode: { value: { petal: 0, rain: 1, steam: 2, dust: 3 }[cfg.mode || 'petal'] },
+      uArea: { value: new THREE.Vector4(cfg.area[0], cfg.area[1], cfg.area[2], cfg.area[3]) },
+      uH: { value: cfg.area[4] },
+      uSpeed: { value: cfg.speed || 1 },
+      uSway: { value: cfg.sway || 0.3 }
+    };
+    var mat = new THREE.ShaderMaterial({
+      uniforms: u,
+      transparent: false,
+      depthWrite: true,
+      vertexShader: [
+        'uniform float uTime, uSnap, uSize, uMode, uH, uSpeed, uSway;',
+        'uniform vec2 uRes;',
+        'uniform vec4 uArea;',
+        'attribute vec3 aSeed;',
+        'varying float vFade;',
+        'void main() {',
+        '  float wx = uArea.y - uArea.x, wz = uArea.w - uArea.z;',
+        '  vec3 p;',
+        '  float fade = 1.0;',
+        '  if (uMode < 0.5) {',                                  // petal
+        '    float y = uH - mod(aSeed.y * uH + uTime * uSpeed, uH);',
+        '    p = vec3(uArea.x + aSeed.x * wx + sin(uTime * 0.9 + aSeed.x * 40.0) * uSway,',
+        '             y,',
+        '             uArea.z + aSeed.z * wz + cos(uTime * 0.7 + aSeed.z * 30.0) * uSway);',
+        '  } else if (uMode < 1.5) {',                           // rain
+        '    float y = uH - mod(aSeed.y * uH + uTime * uSpeed, uH);',
+        '    p = vec3(uArea.x + aSeed.x * wx + y * uSway * 0.25 + uTime * uSway, y,',
+        '             uArea.z + aSeed.z * wz);',
+        '  } else if (uMode < 2.5) {',                           // steam
+        '    float y = mod(aSeed.y * uH + uTime * uSpeed, uH);',
+        '    p = vec3(uArea.x + aSeed.x * wx + sin(uTime + aSeed.x * 20.0) * y * 0.35, y,',
+        '             uArea.z + aSeed.z * wz + cos(uTime * 0.8 + aSeed.z * 17.0) * y * 0.35);',
+        '    fade = 1.0 - y / uH;',
+        '  } else {',                                            // dust
+        '    p = vec3(uArea.x + aSeed.x * wx + sin(uTime * 0.15 + aSeed.x * 50.0) * 0.6,',
+        '             0.25 + aSeed.y * (uH - 0.5) + sin(uTime * 0.4 + aSeed.y * 40.0) * 0.2,',
+        '             uArea.z + aSeed.z * wz + cos(uTime * 0.12 + aSeed.z * 45.0) * 0.6);',
+        '    fade = 0.5 + 0.5 * sin(uTime * 0.6 + aSeed.z * 60.0);',
+        '  }',
+        '  vec4 view = modelViewMatrix * vec4(p, 1.0);',
+        '  vec4 clip = projectionMatrix * view;',
+        '  if (uSnap > 0.5) {',
+        '    vec2 hs = uRes * 0.5;',
+        '    vec2 px = clip.xy / clip.w * hs + hs;',
+        '    px = floor(px) + 0.5;',
+        '    clip.xy = (px / hs - 1.0) * clip.w;',
+        '  }',
+        '  gl_Position = clip;',
+        // uSize is the particle's world size in metres; project to 240px-buffer pixels
+        '  float ps = uSize * 240.0 / max(0.5, -view.z);',
+        '  gl_PointSize = clamp(ps, 1.0, 5.0);',
+        '  vFade = fade;',
+        '}'
+      ].join('\n'),
+      fragmentShader: [
+        'uniform sampler2D uBayer;',
+        'uniform vec3 uColor;',
+        'varying float vFade;',
+        'void main() {',
+        '  float b = texture2D(uBayer, (floor(mod(gl_FragCoord.xy, 4.0)) + 0.5) / 4.0).r;',
+        '  if (b > vFade) discard;',
+        '  vec3 c = uColor * (0.75 + 0.25 * vFade);',
+        '  c = clamp(c + (b - 0.5) * (1.5 / 32.0), 0.0, 1.0);',
+        '  c = floor(c * 31.0 + 0.5) / 31.0;',
+        '  gl_FragColor = vec4(c, 1.0);',
+        '}'
+      ].join('\n')
+    });
+    var pts = new THREE.Points(g, mat);
+    pts.frustumCulled = false;
+    return pts;
+  }
+  PS1.makeParticles = makeParticles;
 
   // ============ Bayer-dithered flat decals (contact shadows + grime) ===
-  function decalMaterial(r, g, b, density) {
+  // zb = depth-layer in quantisation buckets (1 bucket = 1/32 m view depth):
+  // decals sit above their host surface by 0.75+ buckets so they never
+  // z-fight against it when the 3 cm depth snapping reorders coplanar depth.
+  function decalMaterial(r, g, b, density, zb) {
     return new THREE.ShaderMaterial({
       uniforms: {
         uSnap: shared.uSnap, uRes: shared.uRes, uBayer: shared.uBayer,
         uCol: { value: new THREE.Vector3(r, g, b) },
-        uDens: { value: density }
+        uDens: { value: density },
+        uZ: { value: zb || 0.75 }
       },
       vertexShader: [
         'uniform float uSnap;',
+        'uniform float uZ;',
         'uniform vec2 uRes;',
         'void main() {',
         '  vec4 clip = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
@@ -624,6 +665,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         '    clip.xy = (px / hs - 1.0) * clip.w;',
         '    float wq = floor(clip.w * 32.0) / 32.0;',
         '    clip.z = -projectionMatrix[2][2] * wq + projectionMatrix[3][2];',
+        '    clip.z -= abs(projectionMatrix[2][2]) / 32.0 * uZ;',
         '  }',
         '  gl_Position = clip;',
         '}'
@@ -638,131 +680,96 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         '  gl_FragColor = vec4(uCol, 1.0);',
         '}'
       ].join('\n'),
-      depthWrite: false
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2
     });
   }
-  var blobMat = decalMaterial(0, 0, 0, 0.35);   // contact shadows, toggled with key 7
-  var blobGroup = new THREE.Group();
-  var decalGroup = new THREE.Group();           // grime decals, always on
+  PS1.decalMaterial = decalMaterial;
+  var blobMat = decalMaterial(0, 0, 0, 0.35, 1.6);   // contact shadows: topmost decal layer
+  PS1.blobMat = blobMat;
 
-  function blobRect(cx, cz, sx, sz, mat, y, rotY) {
-    var hx = sx / 2, hz = sz / 2;
-    var cr = Math.cos(rotY || 0), sr = Math.sin(rotY || 0);
-    var pos = [];
-    [[-hx, -hz], [hx, -hz], [hx, hz], [-hx, hz]].forEach(function (p) {
-      pos.push(cx + p[0] * cr - p[1] * sr, y, cz + p[0] * sr + p[1] * cr);
-    });
-    var g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setIndex([0, 2, 1, 0, 3, 2]);
-    (mat === blobMat ? blobGroup : decalGroup).add(new THREE.Mesh(g, mat));
-  }
-  function blobOct(cx, cz, r, mat, y, seed) {
-    var pos = [cx, y, cz], idx = [];
-    for (var i = 0; i <= 8; i++) {
-      var a = i / 8 * Math.PI * 2 + Math.PI / 8;
-      var rr = seed ? r * (0.72 + hash2(seed * 31 + i, seed * 7 + 3) * 0.56) : r;
-      pos.push(cx + Math.cos(a) * rr, y, cz + Math.sin(a) * rr);
-      idx.push(0, i + 2, i + 1);
-    }
-    var g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setIndex(idx);
-    (mat === blobMat ? blobGroup : decalGroup).add(new THREE.Mesh(g, mat));
-  }
-  function blobPath(pts, w0, w1, mat, y) {
-    var pos = [], idx = [];
-    for (var i = 0; i < pts.length; i++) {
-      var t = i / (pts.length - 1), w = (w0 + (w1 - w0) * t) / 2;
-      var prev = pts[Math.max(0, i - 1)], next = pts[Math.min(pts.length - 1, i + 1)];
-      var dx = next[0] - prev[0], dz = next[1] - prev[1];
-      var len = Math.hypot(dx, dz) || 1;
-      var px = -dz / len * w, pz = dx / len * w;
-      pos.push(pts[i][0] + px, y, pts[i][1] + pz);
-      pos.push(pts[i][0] - px, y, pts[i][1] - pz);
-      if (i > 0) {
-        var b = (i - 1) * 2;
-        idx.push(b, b + 2, b + 1, b + 1, b + 2, b + 3);
+  // per-scene decal set: blobGroup (toggled with key 7) + decalGroup (always on)
+  function newDecalSet() {
+    var set = {
+      blobGroup: new THREE.Group(),
+      decalGroup: new THREE.Group(),
+      rect: function (cx, cz, sx, sz, mat, y, rotY) {
+        var hx = sx / 2, hz = sz / 2;
+        var cr = Math.cos(rotY || 0), sr = Math.sin(rotY || 0);
+        var pos = [];
+        [[-hx, -hz], [hx, -hz], [hx, hz], [-hx, hz]].forEach(function (p) {
+          pos.push(cx + p[0] * cr - p[1] * sr, y, cz + p[0] * sr + p[1] * cr);
+        });
+        var g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        g.setIndex([0, 2, 1, 0, 3, 2]);
+        (mat === blobMat ? set.blobGroup : set.decalGroup).add(new THREE.Mesh(g, mat));
+      },
+      oct: function (cx, cz, r, mat, y, seed) {
+        var pos = [cx, y, cz], idx = [];
+        for (var i = 0; i <= 8; i++) {
+          var a = i / 8 * Math.PI * 2 + Math.PI / 8;
+          var rr = seed ? r * (0.72 + hash2(seed * 31 + i, seed * 7 + 3) * 0.56) : r;
+          pos.push(cx + Math.cos(a) * rr, y, cz + Math.sin(a) * rr);
+          idx.push(0, i + 2, i + 1);
+        }
+        var g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        g.setIndex(idx);
+        (mat === blobMat ? set.blobGroup : set.decalGroup).add(new THREE.Mesh(g, mat));
+      },
+      path: function (pts, w0, w1, mat, y) {
+        var pos = [], idx = [];
+        for (var i = 0; i < pts.length; i++) {
+          var t = i / (pts.length - 1), w = (w0 + (w1 - w0) * t) / 2;
+          var prev = pts[Math.max(0, i - 1)], next = pts[Math.min(pts.length - 1, i + 1)];
+          var dx = next[0] - prev[0], dz = next[1] - prev[1];
+          var len = Math.hypot(dx, dz) || 1;
+          var px = -dz / len * w, pz = dx / len * w;
+          pos.push(pts[i][0] + px, y, pts[i][1] + pz);
+          pos.push(pts[i][0] - px, y, pts[i][1] - pz);
+          if (i > 0) {
+            var b = (i - 1) * 2;
+            idx.push(b, b + 2, b + 1, b + 1, b + 2, b + 3);
+          }
+        }
+        var g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        g.setIndex(idx);
+        (mat === blobMat ? set.blobGroup : set.decalGroup).add(new THREE.Mesh(g, mat));
+      },
+      wall: function (cx, cy, cz, alongZ, w, h, mat) {
+        var pos = [], hw = w / 2;
+        if (alongZ) {
+          pos.push(cx, cy - h, cz - hw, cx, cy - h, cz + hw, cx, cy, cz + hw, cx, cy, cz - hw);
+        } else {
+          pos.push(cx - hw, cy - h, cz, cx + hw, cy - h, cz, cx + hw, cy, cz, cx - hw, cy, cz);
+        }
+        var g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        g.setIndex([0, 2, 1, 0, 3, 2]);
+        (mat === blobMat ? set.blobGroup : set.decalGroup).add(new THREE.Mesh(g, mat));
       }
-    }
-    var g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setIndex(idx);
-    (mat === blobMat ? blobGroup : decalGroup).add(new THREE.Mesh(g, mat));
+    };
+    return set;
   }
-  function blobWall(cx, cy, cz, alongZ, w, h, mat) {
-    var pos = [], hw = w / 2;
-    if (alongZ) {
-      pos.push(cx, cy - h, cz - hw, cx, cy - h, cz + hw, cx, cy, cz + hw, cx, cy, cz - hw);
-    } else {
-      pos.push(cx - hw, cy - h, cz, cx + hw, cy - h, cz, cx + hw, cy, cz, cx - hw, cy, cz);
-    }
-    var g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setIndex([0, 2, 1, 0, 3, 2]);
-    (mat === blobMat ? blobGroup : decalGroup).add(new THREE.Mesh(g, mat));
-  }
+  PS1.newDecalSet = newDecalSet;
 
-  // v4 contact shadows under v2 props
-  blobRect(-2.56, -3.40, 1.07, 1.07, blobMat, 0.012);   // crate1 + rotated top crate
-  blobRect(-1.65, -3.50, 0.92, 0.92, blobMat, 0.012);   // crate2
-  blobOct(-3.35, -0.60, 0.44, blobMat, 0.012);          // drum
-  roomScene.add(blobGroup);
-
-  // ========================= v5: table + items =========================
-  var wireCol = [0.13, 0.13, 0.14];
-  roomScene.add(cs(boxMesh(matWood, 0.8, 0.75, 1.0, 1.20, 0.06, 0.70, 1.2)));
-  [[0.28, 0.73], [1.32, 0.73], [0.28, 1.27], [1.32, 1.27]].forEach(function (p) {
-    roomScene.add(cs(boxMesh(matWood, p[0], 0.36, p[1], 0.08, 0.72, 0.08, 2.0)));
-  });
-  // green bottle
-  roomScene.add(cs(boxMesh(matPipe, 0.45, 0.89, 1.12, 0.10, 0.22, 0.10, 2, 0, [0.28, 0.40, 0.28])));
-  roomScene.add(cs(boxMesh(matPipe, 0.45, 1.025, 1.12, 0.04, 0.05, 0.04, 2, 0, [0.28, 0.40, 0.28])));
-  // candle + holder
-  roomScene.add(cs(boxMesh(matPipe, 1.02, 0.795, 0.85, 0.12, 0.03, 0.12, 2, 0, [0.24, 0.21, 0.17])));
-  roomScene.add(cs(boxMesh(matPipe, 1.02, 0.865, 0.85, 0.06, 0.11, 0.06, 2, 0, [0.60, 0.58, 0.50])));
-  // open book (cover + pages)
-  roomScene.add(cs(boxMesh(matPipe, 0.72, 0.795, 1.15, 0.26, 0.02, 0.19, 2, 0, [0.20, 0.09, 0.07])));
-  roomScene.add(cs(boxMesh(matPipe, 0.72, 0.812, 1.15, 0.23, 0.015, 0.165, 2, 0, [0.55, 0.53, 0.47])));
-  blobRect(0.8, 1.0, 1.34, 0.84, blobMat, 0.012);       // table contact shadow
-
-  // ========================== v5: bookshelf ============================
-  roomScene.add(cs(boxMesh(matWood, 2.9, 0.975, -3.77, 1.0, 1.95, 0.45, 0.8)));
-  roomScene.add(quadMesh(matBook, 2.9, 0.975, -3.545, 0, 0, 1, 0.92, 1.86, 1 / 0.92, 1 / 1.86));
-  blobRect(2.9, -3.77, 1.10, 0.51, blobMat, 0.012);     // shelf contact shadow
-
-  // ================= v5: wiring + swaying burnt bulb ====================
-  roomScene.add(cs(boxMesh(matPipe, 0, 3.02, -3.70, 7.60, 0.04, 0.04, 2, 0, wireCol)));      // N wall run
-  roomScene.add(cs(boxMesh(matPipe, 3.70, 3.02, -1.35, 0.04, 0.04, 4.75, 2, 0, wireCol)));   // E wall run
-  roomScene.add(cs(boxMesh(matPipe, 2.27, 3.05, 1.0, 2.90, 0.04, 0.04, 2, 0, wireCol)));     // ceiling run
-  var swing = new THREE.Group();
-  swing.position.set(0.8, 3.05, 1.0);   // pivot at ceiling above the table
-  swing.add(cs(boxMesh(matPipe, 0, -0.36, 0, 0.035, 0.72, 0.035, 2, 0, wireCol)));           // drop wire
-  swing.add(cs(boxMesh(matPipe, 0, -0.76, 0, 0.09, 0.10, 0.09, 2, 0, [0.20, 0.19, 0.18])));  // socket
-  swing.add(cs(boxMesh(matPipe, 0, -0.88, 0, 0.12, 0.15, 0.12, 2, 0, [0.15, 0.14, 0.13])));  // burnt bulb
-  roomScene.add(swing);
-
-  // ======================== v5: grime decals ============================
-  var matStain = decalMaterial(0.045, 0.04, 0.032, 0.5);
-  var matDrag = decalMaterial(0.07, 0.025, 0.025, 0.55);
-  var matBlood = decalMaterial(0.11, 0.02, 0.02, 0.62);
-  var matMold = decalMaterial(0.04, 0.06, 0.045, 0.35);
-  blobOct(-3.35, -0.60, 0.62, matStain, 0.006, 1);      // puddle under drum
-  blobOct(1.62, 1.58, 0.34, matStain, 0.006, 2);        // puddle by the table
-  blobPath([[1.2, -3.42], [0.95, -2.7], [0.55, -1.9], [0.25, -1.15]], 0.24, 0.30, matDrag, 0.007);  // drag mark
-  blobOct(1.2, -3.5, 0.40, matBlood, 0.008, 3);         // blood spatter at window
-  blobWall(-3.98, 0.62, 3.15, true, 1.0, 0.6, matMold);  // SW corner, W wall
-  blobWall(-3.15, 0.62, 3.98, false, 1.0, 0.6, matMold); // SW corner, S wall
-  blobWall(3.98, 0.62, 3.15, true, 1.0, 0.6, matMold);   // SE corner, E wall
-  blobWall(3.15, 0.62, 3.98, false, 1.0, 0.6, matMold);  // SE corner, S wall
-  roomScene.add(decalGroup);
+  // ====================== scene registry ==============================
+  var SCENES = [];
+  PS1.registerScene = function (builder) { SCENES.push(builder); };
+  PS1.sceneCount = function () { return SCENES.length; };
 
   // ====================== camera: idle drift + roam ====================
-  var camera = new THREE.PerspectiveCamera(state.fov, IW / IH, 0.1, 50);
-  var basePos = new THREE.Vector3(2.1, EYE, 2.2);
-  var baseTarget = new THREE.Vector3(-4, 1.30, -2.4);
+  var camera = new THREE.PerspectiveCamera(state.fov, IW / IH, 0.1, 200);
+  var basePos = new THREE.Vector3();
+  var baseTarget = new THREE.Vector3();
   var idlePos = new THREE.Vector3(), idleQuat = new THREE.Quaternion();
   var tmpTgt = new THREE.Vector3();
+  var active = null, sceneIdx = 0;
+  var afterBuild = [];
 
   function updateIdle(t) {
     var w1 = Math.PI * 2 / 20, w2 = Math.PI * 2 / 13;
@@ -778,30 +785,22 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     idleQuat.setFromRotationMatrix(m);
   }
 
-  var f0 = tmpTgt.copy(baseTarget).sub(basePos).normalize();
+  var f0 = new THREE.Vector3();
   var walk = {
     active: false,
-    pos: new THREE.Vector3(basePos.x, EYE, basePos.z),
-    yaw: Math.atan2(-f0.x, -f0.z),
-    pitch: Math.asin(f0.y),
+    pos: new THREE.Vector3(),
+    yaw: 0, pitch: 0,
     lastInput: -99,
     bob: 0,
     moving: false
   };
   var keys = {};
-  var colliders = [
-    { x0: -3.05, z0: -3.85, x1: -2.15, z1: -2.95 },   // crate1 + top crate
-    { x0: -2.05, z0: -3.90, x1: -1.25, z1: -3.10 },   // crate2
-    { x0: -3.73, z0: -0.98, x1: -2.97, z1: -0.22 },   // drum (AABB approx)
-    { x0: 0.20, z0: 0.40, x1: 1.40, z1: 1.60 },       // table
-    { x0: 2.40, z0: -3.95, x1: 3.40, z1: -3.45 }      // bookshelf
-  ];
 
   function collide(p) {
-    var lim = 4 - RADIUS - 0.05;
-    p.x = Math.max(-lim, Math.min(lim, p.x));
-    p.z = Math.max(-lim, Math.min(lim, p.z));
-    colliders.forEach(function (c) {
+    var b = active.bounds;
+    p.x = Math.max(b.x0 + RADIUS, Math.min(b.x1 - RADIUS, p.x));
+    p.z = Math.max(b.z0 + RADIUS, Math.min(b.z1 - RADIUS, p.z));
+    active.colliders.forEach(function (c) {
       var qx = Math.max(c.x0, Math.min(p.x, c.x1));
       var qz = Math.max(c.z0, Math.min(p.z, c.z1));
       var dx = p.x - qx, dz = p.z - qz;
@@ -841,7 +840,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       walk.bob += dt * (run ? 13 : 9);
     }
     var bobY = walk.moving ? Math.sin(walk.bob * 2) * 0.030 : 0;
-    walk.pos.y = EYE + bobY;
+    walk.pos.y = active.eyeY + bobY;
   }
 
   var walkQuat = new THREE.Quaternion(), eul = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -920,77 +919,144 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     '}'
   ].join('\n');
 
-  var canvas = document.getElementById('gl');
-  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: false });
-  renderer.setPixelRatio(window.devicePixelRatio || 1);
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-  renderer.setClearColor(0x000000, 1);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.BasicShadowMap;
+  var canvas, renderer, roomRT, crtMat, crtScene, crtCam;
+  var fadeEl;
 
-  var roomRT = new THREE.WebGLRenderTarget(IW, IH, {
-    minFilter: THREE.NearestFilter,
-    magFilter: THREE.NearestFilter,
-    depthBuffer: true
-  });
-  roomRT.texture.colorSpace = THREE.LinearSRGBColorSpace;
+  function initRenderer() {
+    canvas = document.getElementById('gl');
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: false });
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    renderer.setClearColor(0x000000, 1);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.BasicShadowMap;
 
-  var crtMat = new THREE.ShaderMaterial({
-    uniforms: {
-      tRoom: { value: roomRT.texture },
-      uTime: { value: 0 },
-      uCrt: { value: 1 },
-      uOrigin: { value: new THREE.Vector2(0, 0) },
-      uSize: { value: new THREE.Vector2(1, 1) },
-      uLowRes: { value: new THREE.Vector2(IW, IH) }
-    },
-    vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
-    fragmentShader: CRT_FS,
-    depthTest: false,
-    depthWrite: false
-  });
-  var crtScene = new THREE.Scene();
-  {
+    roomRT = new THREE.WebGLRenderTarget(IW, IH, {
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      depthBuffer: true
+    });
+    roomRT.texture.colorSpace = THREE.LinearSRGBColorSpace;
+
+    crtMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tRoom: { value: roomRT.texture },
+        uTime: { value: 0 },
+        uCrt: { value: 1 },
+        uOrigin: { value: new THREE.Vector2(0, 0) },
+        uSize: { value: new THREE.Vector2(1, 1) },
+        uLowRes: { value: new THREE.Vector2(IW, IH) }
+      },
+      vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: CRT_FS,
+      depthTest: false,
+      depthWrite: false
+    });
+    crtScene = new THREE.Scene();
     var g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
     crtScene.add(new THREE.Mesh(g, crtMat));
-  }
-  var crtCam = new THREE.Camera();
+    crtCam = new THREE.Camera();
 
-  function resize() {
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    var W = renderer.domElement.width, Hpx = renderer.domElement.height;
-    var scale = Math.max(1, Math.min(Math.floor(W / IW), Math.floor(Hpx / IH)));
-    var sw = scale * IW, sh = scale * IH;
-    crtMat.uniforms.uOrigin.value.set(Math.floor((W - sw) / 2), Math.floor((Hpx - sh) / 2));
-    crtMat.uniforms.uSize.value.set(sw, sh);
+    fadeEl = document.getElementById('fade');
+
+    function resize() {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      var W = renderer.domElement.width, Hpx = renderer.domElement.height;
+      var scale = Math.max(1, Math.min(Math.floor(W / IW), Math.floor(Hpx / IH)));
+      var sw = scale * IW, sh = scale * IH;
+      crtMat.uniforms.uOrigin.value.set(Math.floor((W - sw) / 2), Math.floor((Hpx - sh) / 2));
+      crtMat.uniforms.uSize.value.set(sw, sh);
+    }
+    window.addEventListener('resize', resize);
+    resize();
   }
-  window.addEventListener('resize', resize);
-  resize();
+
+  // ====================== scene switching ==============================
+  function applyFog() {
+    if (active && active.fog && state.fog) {
+      shared.uFogOn.value = 1;
+      shared.uFogColor.value.fromArray(active.fog.color);
+      shared.uFogNear.value = active.fog.near;
+      shared.uFogFar.value = active.fog.far;
+    } else {
+      shared.uFogOn.value = 0;
+    }
+  }
+  function applyParticleVis() {
+    if (!active) return;
+    var v = state.particles;
+    (active.particles || []).forEach(function (p) { p.visible = v; });
+  }
+  function applyBlobVis() {
+    if (!active) return;
+    if (active.blobGroup) active.blobGroup.visible = state.shadow;
+  }
+
+  function applyScene(i) {
+    sceneIdx = ((i % SCENES.length) + SCENES.length) % SCENES.length;
+    active = SCENES[sceneIdx].rec;
+    basePos.fromArray(active.idle.pos);
+    baseTarget.fromArray(active.idle.target);
+    walk.pos.set(active.spawn[0], (active.eyeY || EYE), active.spawn[1]);
+    walk.yaw = active.spawn[2];
+    walk.pitch = active.spawn[3] || 0;
+    walk.lastInput = -99;
+    camera.far = active.far || 200;
+    camera.updateProjectionMatrix();
+    applyFog();
+    applyParticleVis();
+    applyBlobVis();
+    active.scene.traverse(function (o) {
+      if (o.userData && o.userData.isSky) o.visible = state.sky !== false;
+    });
+    if (active.onShow) active.onShow();
+    updateHud();
+  }
+
+  var switching = false;
+  function nextScene() {
+    if (switching) return;
+    switching = true;
+    if (fadeEl) fadeEl.style.opacity = '1';
+    setTimeout(function () {
+      applyScene(sceneIdx + 1);
+      setTimeout(function () {
+        if (fadeEl) fadeEl.style.opacity = '0';
+        switching = false;
+      }, 60);
+    }, 240);
+  }
+  PS1.nextScene = nextScene;
 
   // ========================= input + HUD ==============================
-  var hud = document.getElementById('hud');
-  var hint = document.getElementById('hint');
+  var hud, hint;
   function onoff(v) { return '<span class="' + (v ? 'on' : 'off') + '">' + (v ? 'ON ' : 'OFF') + '</span>'; }
   function updateHud() {
+    if (!hud) return;
     hud.style.display = state.hud ? 'block' : 'none';
     hint.style.display = state.hud ? 'block' : 'none';
+    var sc = active ? SCENES[sceneIdx].rec.name : '';
+    var idx = '(' + (sceneIdx + 1) + '/' + SCENES.length + ')';
     hud.innerHTML =
-      '<div class="title">PS1 ROOM &mdash; AFFINE TEXTURE WOBBLE</div>' +
+      '<div class="title">PS1 SCENES &mdash; ' + sc.toUpperCase() + ' ' + idx + '</div>' +
       '<div>mode: ' + (walk.active ? '<span class="on">ROAM</span> WASD+mouse, M/Esc exit' : '<span class="off">IDLE DRIFT</span> click / M to roam') + '</div>' +
-      '<div><kbd>1</kbd> affine mapping&nbsp;&nbsp;' + onoff(state.affine) + '</div>' +
-      '<div><kbd>2</kbd> vertex snap&nbsp;&nbsp;&nbsp;&nbsp;' + onoff(state.snap) + '</div>' +
-      '<div><kbd>3</kbd> nearest filter&nbsp;&nbsp;' + onoff(state.nearest) + '</div>' +
-      '<div><kbd>4</kbd> lamp flicker&nbsp;&nbsp;&nbsp;' + onoff(state.flicker) + '</div>' +
-      '<div><kbd>5</kbd> crt filter&nbsp;&nbsp;&nbsp;&nbsp;' + onoff(state.crt) + '</div>' +
-      '<div><kbd>6</kbd> hud&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;' + onoff(state.hud) + '</div>' +
-      '<div><kbd>7</kbd> shadows&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;' + onoff(state.shadow) + '</div>' +
-      '<div><kbd>[</kbd><kbd>]</kbd> fov&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;' + state.fov.toFixed(0) + '&deg; (h ~' + (2 * Math.atan(Math.tan(state.fov * Math.PI / 360) * IW / IH) * 180 / Math.PI).toFixed(0) + '&deg;)</div>';
+      '<div><kbd>N</kbd> scene: ' + sc + ' &mdash; next: ' + (SCENES[(sceneIdx + 1) % SCENES.length].rec.name) + '</div>' +
+      '<div><kbd>1</kbd> affine&nbsp;&nbsp;' + onoff(state.affine) +
+      '&nbsp;&nbsp;<kbd>2</kbd> snap&nbsp;&nbsp;' + onoff(state.snap) +
+      '&nbsp;&nbsp;<kbd>3</kbd> nearest&nbsp;&nbsp;' + onoff(state.nearest) + '</div>' +
+      '<div><kbd>4</kbd> flicker&nbsp;&nbsp;' + onoff(state.flicker) +
+      '&nbsp;&nbsp;<kbd>5</kbd> crt&nbsp;&nbsp;' + onoff(state.crt) +
+      '&nbsp;&nbsp;<kbd>6</kbd> hud&nbsp;&nbsp;' + onoff(state.hud) + '</div>' +
+      '<div><kbd>7</kbd> shadows&nbsp;&nbsp;' + onoff(state.shadow) +
+      '&nbsp;&nbsp;<kbd>8</kbd> fog&nbsp;&nbsp;' + onoff(state.fog && !!(active && active.fog)) +
+      '&nbsp;&nbsp;<kbd>9</kbd> particles&nbsp;&nbsp;' + onoff(state.particles && (active && active.particles && active.particles.length > 0)) + '</div>' +
+      '<div><kbd>[</kbd><kbd>]</kbd> fov ' + state.fov.toFixed(0) + '&deg;</div>';
   }
   function setFilter() {
     var f = state.nearest ? THREE.NearestFilter : THREE.LinearFilter;
-    allTex.forEach(function (t) { t.magFilter = t.minFilter = f; t.needsUpdate = true; });
+    ALLTEX.forEach(function (t) { t.magFilter = t.minFilter = f; t.needsUpdate = true; });
   }
   function tryLock() {
     try {
@@ -1002,7 +1068,6 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     if (walk.active) return;
     walk.active = true;
     updateHud();
-    // pointer lock is a bonus; roam also works with plain mousemove deltas
     tryLock();
   }
   function exitRoam() {
@@ -1017,106 +1082,2328 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     walk.lastInput = nowT;
     updateHud();
   }
-  var lookDownX = 0, lookDownY = 0, lookMoved = 0, lookDragged = false, lockWasOnPress = false;
-  canvas.addEventListener('mousedown', function (e) {
-    lookDownX = e.clientX; lookDownY = e.clientY;
-    lookMoved = 0; lookDragged = false;
-    lockWasOnPress = !!document.pointerLockElement;
-  });
-  // Drag detection uses accumulated motion deltas, not clientX jumps: once a
-  // drag re-acquires pointer lock the cursor position freezes, and a
-  // locked-user drag has to count too (the up-click must not exit roam).
-  document.addEventListener('mousemove', function (e) {
-    if (!walk.active || !(e.buttons & 1)) return;
-    lookMoved += Math.abs(e.movementX) + Math.abs(e.movementY)
-      + Math.abs(e.clientX - lookDownX) + Math.abs(e.clientY - lookDownY);
-    lookDownX = e.clientX; lookDownY = e.clientY;
-    if (lookMoved > 8) lookDragged = true;
-  });
-  canvas.addEventListener('click', function (e) {
-    var consumed = false;
-    if (lookDragged) {
-      consumed = true;                       // drag-look release, not a toggle
-    } else if (!document.pointerLockElement && lockWasOnPress) {
-      // Esc natively dropped the lock (no page keydown); a bare click after
-      // the press re-acquires it instead of exiting roam. A drag or a plain
-      // click-while-unlocked still toggles normally.
-      tryLock(); consumed = true;
-    }
-    lookDragged = false; lookMoved = 0;
-    if (consumed) return;
-    walk.active ? exitRoam() : enterRoam();
-  });
-  document.addEventListener('pointerlockchange', updateHud);
-  document.addEventListener('pointerlockerror', function () { /* fallback mouse-look stays active */ });
-  document.addEventListener('mousemove', function (e) {
-    if (!walk.active) return;
-    // without pointer lock the OS cursor recentering / window re-entry would
-    // teleport the view, so fallback look is drag-only (left button held)
-    if (!document.pointerLockElement && !(e.buttons & 1)) return;
-    var dx = Math.max(-260, Math.min(260, e.movementX));
-    var dy = Math.max(-260, Math.min(260, e.movementY));
-    walk.yaw -= dx * 0.0022;
-    walk.pitch -= dy * 0.0022;
-    var lim = Math.PI / 180 * 85;
-    walk.pitch = Math.max(-lim, Math.min(lim, walk.pitch));
-    walk.lastInput = nowT;
-  });
-  window.addEventListener('keydown', function (e) {
-    var k = e.key.toLowerCase();
-    if (k === 'escape') { exitRoam(); return; }
-    if (walk.active && (k === 'w' || k === 'a' || k === 's' || k === 'd' || k === 'shift')) {
-      keys[k] = true; walk.lastInput = nowT; return;
-    }
-    if (k === 'm') { walk.active ? exitRoam() : enterRoam(); return; }
-    if (e.key === '[' || e.key === ']') {
-      state.fov = Math.max(30, Math.min(100, state.fov + (e.key === ']' ? -2 : 2)));
-      camera.fov = state.fov;
-      camera.updateProjectionMatrix();
+
+  var nowT = 0;
+
+  function initInput() {
+    hud = document.getElementById('hud');
+    hint = document.getElementById('hint');
+    var lookDownX = 0, lookDownY = 0, lookMoved = 0, lookDragged = false, lockWasOnPress = false;
+    canvas.addEventListener('mousedown', function (e) {
+      lookDownX = e.clientX; lookDownY = e.clientY;
+      lookMoved = 0; lookDragged = false;
+      lockWasOnPress = !!document.pointerLockElement;
+    });
+    document.addEventListener('mousemove', function (e) {
+      if (!walk.active || !(e.buttons & 1)) return;
+      lookMoved += Math.abs(e.movementX) + Math.abs(e.movementY)
+        + Math.abs(e.clientX - lookDownX) + Math.abs(e.clientY - lookDownY);
+      lookDownX = e.clientX; lookDownY = e.clientY;
+      if (lookMoved > 8) lookDragged = true;
+    });
+    canvas.addEventListener('click', function () {
+      var consumed = false;
+      if (lookDragged) {
+        consumed = true;                       // drag-look release, not a toggle
+      } else if (!document.pointerLockElement && lockWasOnPress) {
+        tryLock(); consumed = true;
+      }
+      lookDragged = false; lookMoved = 0;
+      if (consumed) return;
+      walk.active ? exitRoam() : enterRoam();
+    });
+    document.addEventListener('pointerlockchange', updateHud);
+    document.addEventListener('pointerlockerror', function () { /* fallback mouse-look stays active */ });
+    document.addEventListener('mousemove', function (e) {
+      if (!walk.active) return;
+      if (!document.pointerLockElement && !(e.buttons & 1)) return;
+      var dx = Math.max(-260, Math.min(260, e.movementX));
+      var dy = Math.max(-260, Math.min(260, e.movementY));
+      walk.yaw -= dx * 0.0022;
+      walk.pitch -= dy * 0.0022;
+      var lim = Math.PI / 180 * 85;
+      walk.pitch = Math.max(-lim, Math.min(lim, walk.pitch));
+      walk.lastInput = nowT;
+    });
+    window.addEventListener('keydown', function (e) {
+      var k = e.key.toLowerCase();
+      if (k === 'escape') { exitRoam(); return; }
+      if (k === 'n') { nextScene(); return; }
+      if (walk.active && (k === 'w' || k === 'a' || k === 's' || k === 'd' || k === 'shift')) {
+        keys[k] = true; walk.lastInput = nowT; return;
+      }
+      if (k === 'm') { walk.active ? exitRoam() : enterRoam(); return; }
+      if (e.key === '[' || e.key === ']') {
+        state.fov = Math.max(30, Math.min(100, state.fov + (e.key === ']' ? -2 : 2)));
+        camera.fov = state.fov;
+        camera.updateProjectionMatrix();
+        updateHud();
+        return;
+      }
+      if (k === '1') state.affine = !state.affine;
+      else if (k === '2') state.snap = !state.snap;
+      else if (k === '3') { state.nearest = !state.nearest; setFilter(); }
+      else if (k === '4') state.flicker = !state.flicker;
+      else if (k === '5') state.crt = !state.crt;
+      else if (k === '6') state.hud = !state.hud;
+      else if (k === '7') { state.shadow = !state.shadow; applyBlobVis(); }
+      else if (k === '8') { state.fog = !state.fog; applyFog(); }
+      else if (k === '9') { state.particles = !state.particles; applyParticleVis(); }
+      else return;
       updateHud();
-      return;
-    }
-    if (k === '1') state.affine = !state.affine;
-    else if (k === '2') state.snap = !state.snap;
-    else if (k === '3') { state.nearest = !state.nearest; setFilter(); }
-    else if (k === '4') state.flicker = !state.flicker;
-    else if (k === '5') state.crt = !state.crt;
-    else if (k === '6') state.hud = !state.hud;
-    else if (k === '7') state.shadow = !state.shadow;
-    else return;
-    updateHud();
-  });
-  window.addEventListener('keyup', function (e) { keys[e.key.toLowerCase()] = false; });
-  updateHud();
+    });
+    window.addEventListener('keyup', function (e) { keys[e.key.toLowerCase()] = false; });
+  }
 
   // ============================ main loop =============================
-  var clock = new THREE.Clock();
-  var nowT = 0;
+  var clock = null;
+
   function frame() {
     requestAnimationFrame(frame);
     var dt = Math.min(0.05, clock.getDelta());
     nowT += dt;
+    shared.uTime.value = nowT;
     updateIdle(nowT);
     updateWalk(nowT, dt);
     poseBlend(nowT);
 
     shared.uAffine.value = state.affine ? 1 : 0;
     shared.uSnap.value = state.snap ? 1 : 0;
-    shared.uFlicker.value = flickerValue(nowT);
+    shared.uFlicker.value = (active && active.noFlicker) ? 1 : flickerValue(nowT);
     shared.uShadow.value = state.shadow ? 1 : 0;
-    blobGroup.visible = state.shadow;
-    swing.rotation.z = 0.052 * Math.sin(nowT * Math.PI / 2);
-    swing.rotation.x = 0.031 * Math.sin(nowT * Math.PI * 0.43 + 1.3);
+
+    if (active && active.update) active.update(nowT, dt);
+
     crtMat.uniforms.uTime.value = nowT;
     crtMat.uniforms.uCrt.value = state.crt ? 1 : 0;
 
     renderer.setRenderTarget(roomRT);
-    renderer.render(roomScene, camera);
+    renderer.render(active.scene, camera);
     renderer.setRenderTarget(null);
     renderer.render(crtScene, crtCam);
   }
-  frame();
+
+  // ============================== boot =================================
+  PS1.boot = function () {
+    initRenderer();
+    // build all registered scenes once, in registration order
+    SCENES.forEach(function (s) {
+      s.rec = s();          // s is the builder function registered by each scene
+      if (s.rec.eyeY == null) s.rec.eyeY = EYE;
+    });
+    initInput();
+    var startIdx = parseInt((location.hash.match(/scene=(\d+)/) || [])[1] || '0', 10) || 0;
+    // optional deep-link overrides: #scene=1&crt=0&hud=0&shadow=0&fog=0&affine=1&snap=0&particles=0
+    (location.hash.match(/[a-z]+=[0-9]+/g) || []).forEach(function (kv) {
+      var pair = kv.split('='), k = pair[0], v = pair[1] === '1';
+      if (k in state) {
+        state[k] = v;
+        if (k === 'nearest') setFilter();
+      }
+    });
+    applyScene(startIdx);
+    // debug: #cam=x,y,z&look=x,y,z overrides the idle framing (no validation, debug only)
+    var camM = location.hash.match(/cam=(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)/);
+    var lookM = location.hash.match(/look=(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)/);
+    if (camM) {
+      basePos.set(+camM[1], +camM[2], +camM[3]);
+      if (lookM) baseTarget.set(+lookM[1], +lookM[2], +lookM[3]);
+      else baseTarget.set(0, 1, 0);
+    }
+    updateHud();
+    clock = new THREE.Clock();
+    frame();
+  };
 })();
+
+;
+(function () {
+  'use strict';
+  var texFrom = PS1.texFrom, pixelLoop = PS1.pixelLoop, newCanvas = PS1.newCanvas;
+  var hash2 = PS1.hash2, vnoise = PS1.vnoise;
+  var boxMesh = PS1.boxMesh, prismMesh = PS1.prismMesh, quadMesh = PS1.quadMesh;
+  var wallSurface = PS1.wallSurface, groundGrid = PS1.groundGrid;
+  var shade = PS1.shade, cs = PS1.cs, setRelight = PS1.setRelight;
+
+  // ========================= procedural textures ======================
+  function floorCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var a = x + y, b = x - y + 64;
+      var ca = Math.floor(a / 16), cb = Math.floor(b / 16);
+      var da = a - ca * 16, db = b - cb * 16;
+      var base = ((ca + cb) & 1) ? [86, 84, 78] : [150, 148, 138];
+      var tint = (hash2(((ca % 4) + 4) % 4, cb % 4) * 2 - 1) * 9;
+      var r = base[0] + tint, g = base[1] + tint, b2 = base[2] + tint;
+      var edge = Math.min(da, db);
+      if (edge < 2) {
+        var k = edge < 1 ? 1 : 0.5;
+        r += (44 - r) * k; g += (42 - g) * k; b2 += (38 - b2) * k;
+      }
+      var sp = hash2(x, y);
+      if (sp < 0.12) { var q = 0.80 + sp * 0.5; r *= q; g *= q; b2 *= q; }
+      var st = vnoise(x / 16, y / 16, 4, 2);
+      if (st > 0.60) { var n = (st - 0.60) * 1.9; r *= 1 - n; g *= 1 - n * 0.95; b2 *= 1 - n * 0.85; }
+      return [r, g, b2];
+    });
+  }
+
+  function wallCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var row = Math.floor(y / 16);
+      var x2 = x + (row & 1) * 16;
+      var col = Math.floor(x2 / 32), cx = x2 - col * 32;
+      var tint = (hash2(col % 2, row * 7 + 3) * 2 - 1) * 11;
+      var r = 122 + tint, g = 118 + tint, b = 110 + tint;
+      var ry = y - row * 16;
+      if (ry < 1 || cx < 1) { r = 64 + tint * 0.4; g = 62 + tint * 0.4; b = 58 + tint * 0.4; }
+      else if (ry === 1 || cx === 1) { r *= 0.8; g *= 0.8; b *= 0.8; }
+      var ci = Math.floor(x / 4);
+      var k = hash2(((ci % 16) + 16) % 16, 7);
+      if (k < 0.30) {
+        var xc = ci * 4 + 2 + Math.sin(y * 0.18 + ci * 2.3) * 1.4;
+        var dx = x - xc; dx -= 64 * Math.round(dx / 64);
+        var fall = Math.max(0, 1 - Math.abs(dx) / 2.2) * Math.pow(y / 64, 1.6) * 0.30 * (0.4 + k * 2);
+        r *= 1 - fall; g *= 1 - fall; b *= 1 - fall * 0.9;
+      }
+      var sp = hash2(x + 91, y + 17);
+      if (sp < 0.10) { r *= 0.86; g *= 0.86; b *= 0.86; }
+      return [r, g, b];
+    });
+  }
+
+  function woodCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var row = Math.floor(y / 16), ry = y - row * 16;
+      var tint = (hash2(row, 5) * 2 - 1) * 14;
+      var r = 132 + tint, g = 96 + tint * 0.8, b = 56 + tint * 0.6;
+      if (ry < 1) { r = 52; g = 38; b = 24; }
+      else if (ry === 1) { r *= 0.75; g *= 0.75; b *= 0.75; }
+      var grain = vnoise(x / 24, (y + row * 31) / 3.2, 8, 2);
+      if (grain > 0.62) { var n = (grain - 0.62) * 1.6; r *= 1 - n * 0.5; g *= 1 - n * 0.55; b *= 1 - n * 0.55; }
+      var nx = (x + 8 + row * 13) % 32, ny = ry;
+      if ((nx === 4 || nx === 28) && (ny === 5 || ny === 10)) { r = 70; g = 68; b = 66; }
+      var sp = hash2(x + 7, y + 3);
+      if (sp < 0.08) { r *= 0.8; g *= 0.8; b *= 0.8; }
+      return [r, g, b];
+    });
+  }
+
+  function barrelCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var tint = (hash2(Math.floor(x / 8), 11) * 2 - 1) * 6;
+      var r = 74 + tint, g = 86 + tint, b = 68 + tint;
+      var band = (y === 6 || y === 7 || y === 30 || y === 31 || y === 54 || y === 55);
+      var rib = (y === 8 || y === 32 || y === 56);
+      if (band) { r = 48; g = 56; b = 46; }
+      else if (rib) { r = 110; g = 120; b = 100; }
+      var rust = vnoise(x / 12, y / 12, 6, 2);
+      if (rust > 0.68) { var n = Math.min(1, (rust - 0.68) * 3.2); r = r + (122 - r) * n; g = g + (66 - g) * n; b = b + (34 - b) * n; }
+      if ((y === 7 || y === 31) && x % 8 === 4) { r = 130; g = 134; b = 120; }
+      var sp = hash2(x + 41, y + 13);
+      if (sp < 0.10) { r *= 0.82; g *= 0.82; b *= 0.82; }
+      return [r, g, b];
+    });
+  }
+
+  function pipeCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var tint = (hash2(Math.floor(y / 32), 23) * 2 - 1) * 7;
+      var r = 92 + tint, g = 90 + tint, b = 86 + tint;
+      if (x === 0 || x === 32) { r = 50; g = 50; b = 48; }
+      if (x === 1 || x === 33) { r *= 1.18; g *= 1.18; b *= 1.18; }
+      if (x % 16 < 1 && y % 16 < 1) { r = 60; g = 60; b = 58; }
+      var rust = vnoise(x / 14 + 3, y / 14, 5, 2);
+      if (rust > 0.70) { var n = Math.min(1, (rust - 0.70) * 3); r = r + (118 - r) * n; g = g + (64 - g) * n; b = b + (32 - b) * n; }
+      var sp = hash2(x + 5, y + 71);
+      if (sp < 0.10) { r *= 0.84; g *= 0.84; b *= 0.84; }
+      return [r, g, b];
+    });
+  }
+
+  function grilleCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var frame = (x < 3 || x > 60 || y < 3 || y > 60);
+      if (frame) { var t = (hash2(x, y) * 2 - 1) * 6; return [70 + t, 70 + t, 68 + t]; }
+      var slat = y % 8;
+      if (slat < 3) return [30, 30, 32];
+      if (slat === 3) return [120, 118, 114];
+      var t2 = (hash2(x, y) * 2 - 1) * 8;
+      return [84 + t2, 82 + t2, 78 + t2];
+    });
+  }
+
+  function windowCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var r = 16, g = 16, b = 20;
+      function board(bx, by) {
+        var t = (hash2(bx, by) * 2 - 1) * 12;
+        return [126 + t, 92 + t * 0.8, 54 + t * 0.6];
+      }
+      function band(d, c0, w) {
+        var v = d - c0; if (v < 0) v += 64;
+        return v < w;
+      }
+      var on1 = band(x + Math.floor(y * 0.55), 10, 13), on2 = band(x - Math.floor(y * 0.62) + 40, 30, 12);
+      var wood = on1 ? board(1, 3) : (on2 ? board(2, 7) : null);
+      if (wood) {
+        var grain = vnoise(x / 20, y / 4, 8, 2);
+        var k = grain > 0.6 ? 0.82 : 1;
+        r = wood[0] * k; g = wood[1] * k; b = wood[2] * k;
+        if ((x + y * 2) % 23 < 2 && (x * 2 - y) % 19 < 2) { r = 60; g = 58; b = 56; }
+      }
+      var sp = hash2(x + 3, y + 97);
+      if (sp < 0.06 && !wood) { r *= 1.8; g *= 1.8; b *= 1.8; }
+      return [r, g, b];
+    });
+  }
+
+  function bookCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var row = Math.floor(y / 16), ry = y - row * 16;
+      var frame = (ry < 3) || (x % 32 < 2 && ry > 40);
+      if (row === 0 && ry < 2) return [40, 30, 20];
+      if (frame) { var t = (hash2(x, row * 31) * 2 - 1) * 8; return [64 + t, 46 + t, 30 + t]; }
+      var slot = Math.floor(x / 3);
+      var k = hash2(slot, row * 7 + 3);
+      var top = 4 + Math.floor(k * 4);
+      if (ry < top) return [18, 16, 14];
+      var palette = [
+        [96, 40, 36], [52, 60, 88], [70, 82, 52], [104, 88, 48], [78, 52, 70], [58, 60, 62]
+      ];
+      var c = palette[Math.floor(k * 997) % palette.length];
+      var sh = 0.75 + hash2(slot * 3 + 1, row) * 0.5;
+      var r = c[0] * sh, g = c[1] * sh, b = c[2] * sh;
+      if (hash2(slot, row * 13 + 9) < 0.22 && ry > 8 && ry < 11) { r *= 1.5; g *= 1.5; b *= 1.4; }
+      if (x % 3 === 0 || x % 3 === 2 && hash2(slot + 5, row) < 0.5) { r *= 0.55; g *= 0.55; b *= 0.55; }
+      if (k < 0.10) { r = 30; g = 28; b = 26; }
+      return [r, g, b];
+    });
+  }
+
+  var whiteTex = PS1.solidTexture(255, 255, 255);
+  var floorTex = texFrom(floorCanvas());
+  var wallTex = texFrom(wallCanvas());
+  var woodTex = texFrom(woodCanvas());
+  var barrelTex = texFrom(barrelCanvas());
+  var pipeTex = texFrom(pipeCanvas());
+  var grilleTex = texFrom(grilleCanvas());
+  var windowTex = texFrom(windowCanvas());
+  var bookTex = texFrom(bookCanvas());
+
+  var ps1Material = PS1.ps1Material;
+  var matFloor = ps1Material(floorTex);
+  var matWall = ps1Material(wallTex);
+  var matWood = ps1Material(woodTex);
+  var matBarrel = ps1Material(barrelTex);
+  var matPipe = ps1Material(pipeTex);
+  var matGrille = ps1Material(grilleTex);
+  var matWindow = ps1Material(windowTex);
+  var matBook = ps1Material(bookTex);
+  var matBulb = ps1Material(whiteTex);
+
+  // ====================== light baking (vertex color) =================
+  var LAMP = new THREE.Vector3(0, 2.42, 0);
+  var roomRelight = function (x, y, z, nx, ny, nz) {
+    var dx = LAMP.x - x, dy = LAMP.y - y, dz = LAMP.z - z;
+    var d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    var fall = Math.max(0.20, Math.min(1.0, 1.55 - 0.21 * d));
+    var inv = d > 1e-4 ? 1 / d : 0;
+    var ndl = Math.max(0, (dx * nx + dy * ny + dz * nz) * inv);
+    var b = fall * (0.55 + 0.55 * ndl) + 0.06;
+    return shade(Math.max(0.16, Math.min(1.0, b)));
+  };
+
+  PS1.registerScene(function () {
+    setRelight(roomRelight);
+    // ============================ room assembly ==========================
+    var roomScene = new THREE.Scene();
+    var H = 3.2;
+    roomScene.add(groundGrid(matFloor, 0, 0, 8, 8, 1, 1, 0, 1));
+    roomScene.add(groundGrid(matWall, 0, 0, 8, 8, 1, 1, H, -1));
+    roomScene.add(wallSurface(matWall, [-4, 0, -4], [4, 0, -4], [4, H, -4], [-4, H, -4], 4, 1.6, 0, 0, 1));    // N
+    roomScene.add(wallSurface(matWall, [-4, 0, 4], [-4, 0, -4], [-4, H, -4], [-4, H, 4], 4, 1.6, 1, 0, 0));    // W
+    roomScene.add(wallSurface(matWall, [4, 0, -4], [4, 0, 4], [4, H, 4], [4, H, -4], 4, 1.6, -1, 0, 0));       // E
+    roomScene.add(wallSurface(matWall, [4, 0, 4], [-4, 0, 4], [-4, H, 4], [4, H, 4], 4, 1.6, 0, 0, -1));       // S
+
+    // crates, NW corner (2 + 1 stack)
+    roomScene.add(cs(boxMesh(matWood, -2.60, 0.45, -3.40, 0.90, 0.90, 0.90, 1.1)));
+    roomScene.add(cs(boxMesh(matWood, -1.65, 0.40, -3.50, 0.80, 0.80, 0.80, 1.1)));
+    roomScene.add(cs(boxMesh(matWood, -2.55, 1.25, -3.35, 0.70, 0.70, 0.70, 1.2, 0.35)));
+    // oil drum, W wall
+    roomScene.add(cs(prismMesh(matBarrel, -3.35, -0.60, 0.38, 1.05, 8, 1.6, 1.0, 0.30)));
+    // pipes along W + N wall tops
+    roomScene.add(cs(boxMesh(matPipe, -3.74, 2.82, 0, 0.16, 0.16, 7.8, 1.3)));
+    roomScene.add(cs(boxMesh(matPipe, 0, 2.82, -3.74, 7.8, 0.16, 0.16, 1.3)));
+    roomScene.add(cs(boxMesh(matPipe, -3.74, 2.82, -3.74, 0.22, 0.22, 0.22, 1.3)));   // corner elbow
+    // vent grille on W wall under pipe end
+    roomScene.add(quadMesh(matGrille, -3.93, 2.15, -1.5, 1, 0, 0, 0.6, 0.6, 1, 1));
+    // boarded window on N wall (x 0.5..1.9, y 1.55..2.65)
+    roomScene.add(quadMesh(matWindow, 1.2, 2.10, -3.93, 0, 0, 1, 1.4, 1.1, 1, 1));
+    roomScene.add(cs(boxMesh(matWood, 1.20, 2.28, -3.86, 1.55, 0.16, 0.07, 1.4, 0.14)));
+    roomScene.add(cs(boxMesh(matWood, 1.20, 1.92, -3.86, 1.55, 0.16, 0.07, 1.4, -0.11)));
+    roomScene.add(cs(boxMesh(matWood, 0.85, 2.10, -3.86, 0.14, 1.05, 0.07, 1.4, 0.05)));
+    // hanging lamp at ceiling center: rod + shade cone + bulb disc
+    roomScene.add(cs(boxMesh(matPipe, 0, 3.02, 0, 0.06, 0.36, 0.06, 2.0)));
+    (function () {
+      var seg = 8, pos = [], uvs = [], cols = [], idx = [];
+      var apex = [0, 2.78, 0];
+      for (var i = 0; i <= seg; i++) {
+        var a = i / seg * Math.PI * 2;
+        var x = Math.cos(a) * 0.5, z = Math.sin(a) * 0.5, y = 2.42;
+        pos.push(x, y, z);
+        uvs.push(i / seg * 2, 0);
+        cols = cols.concat(PS1.relight(x, y, z, Math.cos(a), 0.4, Math.sin(a)));
+      }
+      pos.push(apex[0], apex[1], apex[2]); uvs.push(1, 1);
+      cols = cols.concat(PS1.relight(apex[0], apex[1], apex[2], 0, 1, 0));
+      var ai = pos.length / 3 - 1;
+      for (i = 0; i < seg; i++) idx.push(i, ai, i + 1);
+      roomScene.add(cs(new THREE.Mesh(PS1.geo(pos, uvs, cols, idx), matPipe)));
+    })();
+    (function () {
+      var seg = 8, pos = [], uvs = [], cols = [], idx = [];
+      pos.push(0, 2.40, 0); uvs.push(0.5, 0.5); cols.push(1.8, 1.55, 1.05);
+      for (var i = 0; i <= seg; i++) {
+        var a = i / seg * Math.PI * 2;
+        pos.push(Math.cos(a) * 0.13, 2.36, Math.sin(a) * 0.13);
+        uvs.push(0.5 + Math.cos(a) * 0.5, 0.5 + Math.sin(a) * 0.5);
+        cols.push(1.8, 1.55, 1.05);
+      }
+      for (i = 0; i < seg; i++) idx.push(0, i + 1, i + 2);
+      roomScene.add(new THREE.Mesh(PS1.geo(pos, uvs, cols, idx), matBulb));
+    })();
+
+    // ====================== real-time point shadow ======================
+    var lamp = new THREE.PointLight(0xffffff, 1);
+    lamp.position.copy(LAMP);
+    lamp.castShadow = true;
+    lamp.shadow.mapSize.set(256, 256);
+    lamp.shadow.camera.near = 0.15;
+    lamp.shadow.camera.far = 7;
+    lamp.shadow.bias = -0.004;
+    lamp.shadow.normalBias = 0.02;
+    roomScene.add(lamp);
+
+    // ===================== decals (contact shadows + grime) =============
+    var decals = PS1.newDecalSet();
+    var blobRect = decals.rect, blobOct = decals.oct, blobPath = decals.path, blobWall = decals.wall;
+    blobRect(-2.56, -3.40, 1.07, 1.07, PS1.blobMat, 0.012);   // crate1 + rotated top crate
+    blobRect(-1.65, -3.50, 0.92, 0.92, PS1.blobMat, 0.012);   // crate2
+    blobOct(-3.35, -0.60, 0.44, PS1.blobMat, 0.012);          // drum
+    roomScene.add(decals.blobGroup);
+
+    // ========================= table + items ============================
+    var wireCol = [0.13, 0.13, 0.14];
+    roomScene.add(cs(boxMesh(matWood, 0.8, 0.75, 1.0, 1.20, 0.06, 0.70, 1.2)));
+    [[0.28, 0.73], [1.32, 0.73], [0.28, 1.27], [1.32, 1.27]].forEach(function (p) {
+      roomScene.add(cs(boxMesh(matWood, p[0], 0.36, p[1], 0.08, 0.72, 0.08, 2.0)));
+    });
+    roomScene.add(cs(boxMesh(matPipe, 0.45, 0.89, 1.12, 0.10, 0.22, 0.10, 2, 0, [0.28, 0.40, 0.28])));
+    roomScene.add(cs(boxMesh(matPipe, 0.45, 1.025, 1.12, 0.04, 0.05, 0.04, 2, 0, [0.28, 0.40, 0.28])));
+    roomScene.add(cs(boxMesh(matPipe, 1.02, 0.795, 0.85, 0.12, 0.03, 0.12, 2, 0, [0.24, 0.21, 0.17])));
+    roomScene.add(cs(boxMesh(matPipe, 1.02, 0.865, 0.85, 0.06, 0.11, 0.06, 2, 0, [0.60, 0.58, 0.50])));
+    roomScene.add(cs(boxMesh(matPipe, 0.72, 0.795, 1.15, 0.26, 0.02, 0.19, 2, 0, [0.20, 0.09, 0.07])));
+    roomScene.add(cs(boxMesh(matPipe, 0.72, 0.812, 1.15, 0.23, 0.015, 0.165, 2, 0, [0.55, 0.53, 0.47])));
+    blobRect(0.8, 1.0, 1.34, 0.84, PS1.blobMat, 0.012);       // table contact shadow
+
+    // ========================== bookshelf ===============================
+    roomScene.add(cs(boxMesh(matWood, 2.9, 0.975, -3.77, 1.0, 1.95, 0.45, 0.8)));
+    roomScene.add(quadMesh(matBook, 2.9, 0.975, -3.50, 0, 0, 1, 0.92, 1.86, 1 / 0.92, 1 / 1.86));   // 4.5cm off the shelf front: > 1 depth bucket
+    blobRect(2.9, -3.77, 1.10, 0.51, PS1.blobMat, 0.012);     // shelf contact shadow
+
+    // ================= wiring + swaying burnt bulb ======================
+    roomScene.add(cs(boxMesh(matPipe, 0, 3.02, -3.70, 7.60, 0.04, 0.04, 2, 0, wireCol)));
+    roomScene.add(cs(boxMesh(matPipe, 3.70, 3.02, -1.35, 0.04, 0.04, 4.75, 2, 0, wireCol)));
+    roomScene.add(cs(boxMesh(matPipe, 2.27, 3.05, 1.0, 2.90, 0.04, 0.04, 2, 0, wireCol)));
+    var swing = new THREE.Group();
+    swing.position.set(0.8, 3.05, 1.0);   // pivot at ceiling above the table
+    swing.add(cs(boxMesh(matPipe, 0, -0.36, 0, 0.035, 0.72, 0.035, 2, 0, wireCol)));
+    swing.add(cs(boxMesh(matPipe, 0, -0.76, 0, 0.09, 0.10, 0.09, 2, 0, [0.20, 0.19, 0.18])));
+    swing.add(cs(boxMesh(matPipe, 0, -0.88, 0, 0.12, 0.15, 0.12, 2, 0, [0.15, 0.14, 0.13])));
+    roomScene.add(swing);
+
+    // ========================= grime decals ==============================
+    var decalMaterial = PS1.decalMaterial;
+    var matStain = decalMaterial(0.045, 0.04, 0.032, 0.5);
+    var matDrag = decalMaterial(0.07, 0.025, 0.025, 0.55);
+    var matBlood = decalMaterial(0.11, 0.02, 0.02, 0.62);
+    var matMold = decalMaterial(0.04, 0.06, 0.045, 0.35);
+    blobOct(-3.35, -0.60, 0.62, matStain, 0.006, 1);      // puddle under drum
+    blobOct(1.62, 1.58, 0.34, matStain, 0.006, 2);        // puddle by the table
+    blobPath([[1.2, -3.42], [0.95, -2.7], [0.55, -1.9], [0.25, -1.15]], 0.24, 0.30, matDrag, 0.007);
+    blobOct(1.2, -3.5, 0.40, matBlood, 0.008, 3);         // blood spatter at window
+    blobWall(-3.98, 0.62, 3.15, true, 1.0, 0.6, matMold);
+    blobWall(-3.15, 0.62, 3.98, false, 1.0, 0.6, matMold);
+    blobWall(3.98, 0.62, 3.15, true, 1.0, 0.6, matMold);
+    blobWall(3.15, 0.62, 3.98, false, 1.0, 0.6, matMold);
+    roomScene.add(decals.decalGroup);
+
+    var lim = 4 - PS1.RADIUS - 0.05;
+    return {
+      name: '密封房间',
+      scene: roomScene,
+      colliders: [
+        { x0: -3.05, z0: -3.85, x1: -2.15, z1: -2.95 },   // crate1 + top crate
+        { x0: -2.05, z0: -3.90, x1: -1.25, z1: -3.10 },   // crate2
+        { x0: -3.73, z0: -0.98, x1: -2.97, z1: -0.22 },   // drum (AABB approx)
+        { x0: 0.20, z0: 0.40, x1: 1.40, z1: 1.60 },       // table
+        { x0: 2.40, z0: -3.95, x1: 3.40, z1: -3.45 }      // bookshelf
+      ],
+      bounds: { x0: -lim, x1: lim, z0: -lim, z1: lim },
+      spawn: [2.1, 2.2, Math.atan2(-(-4 - 2.1), -(-2.4 - 2.2)), Math.asin((1.30 - PS1.EYE) / Math.hypot(-4 - 2.1, 1.30 - PS1.EYE, -2.4 - 2.2))],
+      idle: { pos: [2.1, PS1.EYE, 2.2], target: [-4, 1.30, -2.4] },
+      fog: null,
+      noFlicker: false,
+      blobGroup: decals.blobGroup,
+      particles: [],
+      update: function (t) {
+        swing.rotation.z = 0.052 * Math.sin(t * Math.PI / 2);
+        swing.rotation.x = 0.031 * Math.sin(t * Math.PI * 0.43 + 1.3);
+      }
+    };
+  });
+})();
+
+;
+(function () {
+  'use strict';
+  // ======================= 黄昏神社庭院 ================================
+  var texFrom = PS1.texFrom, pixelLoop = PS1.pixelLoop, newCanvas = PS1.newCanvas;
+  var hash2 = PS1.hash2, vnoise = PS1.vnoise;
+  var boxMesh = PS1.boxMesh, prismMesh = PS1.prismMesh, quadMesh = PS1.quadMesh;
+  var quadCorners = PS1.quadCorners, blobMesh = PS1.blobMesh;
+  var shade = PS1.shade, cs = PS1.cs, setRelight = PS1.setRelight;
+  var ps1Material = PS1.ps1Material;
+
+  // ------------------------- textures ---------------------------------
+  function gravelCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var base = 168, t = (hash2(Math.floor(x / 3), Math.floor(y / 3)) * 2 - 1) * 10;
+      var r = base + t + 8, g = base + t + 4, b = base + t - 2;
+      // raked lines: soft horizontal arcs
+      var rake = Math.sin(y * 0.42 + Math.sin(x * 0.06) * 1.4);
+      var k = rake > 0.55 ? 0.90 : (rake < -0.55 ? 1.08 : 1);
+      r *= k; g *= k; b *= k;
+      // scattered pebbles
+      var px = Math.floor(x / 2), py = Math.floor(y / 2);
+      var sp = hash2(px * 3 + 1, py * 5 + 2);
+      if (sp < 0.05) { r *= 0.62; g *= 0.62; b *= 0.60; }
+      else if (sp > 0.965) { r *= 1.25; g *= 1.24; b *= 1.18; }
+      var moss = vnoise(x / 20, y / 20, 3, 2);
+      if (moss > 0.74) { var n = (moss - 0.74) * 2.4; r *= 1 - n * 0.5; g *= 1 - n * 0.2; b *= 1 - n * 0.5; }
+      return [r, g, b];
+    });
+  }
+  function stoneCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var row = Math.floor(y / 21), ry = y - row * 21;
+      var x2 = x + (row & 1) * 16;
+      var col = Math.floor(x2 / 32), cx = x2 - col * 32;
+      var tint = (hash2(col % 3, row * 5 + 1) * 2 - 1) * 12;
+      var r = 128 + tint, g = 126 + tint, b = 120 + tint;
+      var grain = vnoise(x / 5, y / 5, 8, 2);
+      r *= 0.88 + grain * 0.24; g *= 0.88 + grain * 0.24; b *= 0.88 + grain * 0.24;
+      if (ry < 1 || cx < 1) { r *= 0.55; g *= 0.55; b *= 0.55; }
+      var sp = hash2(x + 13, y + 29);
+      if (sp < 0.09) { r *= 0.84; g *= 0.84; b *= 0.84; }
+      return [r, g, b];
+    });
+  }
+  function toriiCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var grain = vnoise(x / 3, y / 30, 8, 2);
+      var base = 206, r = base, g = 68, b = 38;
+      r *= 0.88 + grain * 0.2; g *= 0.88 + grain * 0.24; b *= 0.88 + grain * 0.24;
+      // horizontal dark band at top (kasagi shadow line)
+      if (y > 56) { r *= 0.35; g *= 0.35; b *= 0.35; }
+      var sp = hash2(x + 3, y + 61);
+      if (sp < 0.07) { r *= 0.8; g *= 0.8; b *= 0.8; }
+      return [r, g, b];
+    });
+  }
+  function waterCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var r = 24, g = 62, b = 62;
+      var w1 = Math.sin((x + Math.sin(y * 0.3) * 6) * 0.35);
+      var w2 = Math.sin((y + Math.sin(x * 0.22) * 8) * 0.26 + 2.0);
+      var k = 0.8 + 0.2 * w1 + 0.18 * w2;
+      r *= k; g *= k; b *= k;
+      if (w1 > 0.86 && w2 > 0.4) { r += 80; g += 92; b += 84; }   // glints
+      var sp = hash2(x + 7, y + 19);
+      if (sp < 0.05) { r += 26; g += 30; b += 28; }
+      return [r, g, b];
+    });
+  }
+  function barkCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var grain = vnoise(x / 4, y / 22, 8, 2);
+      var r = 88, g = 62, b = 48;
+      r *= 0.8 + grain * 0.4; g *= 0.8 + grain * 0.4; b *= 0.8 + grain * 0.4;
+      if (x % 23 < 1) { r *= 0.6; g *= 0.6; b *= 0.6; }
+      var sp = hash2(x + 41, y + 3);
+      if (sp < 0.08) { r *= 0.75; g *= 0.75; b *= 0.75; }
+      // moss patches
+      var moss = vnoise(x / 12, y / 12, 5, 2);
+      if (moss > 0.70) { var n = (moss - 0.70) * 2; r *= 1 - n * 0.5; g *= 1 - n * 0.1; b *= 1 - n * 0.5; }
+      return [r, g, b];
+    });
+  }
+  function leafCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var cl = vnoise(x / 7, y / 7, 9, 3);
+      var r, g, b;
+      if (cl > 0.62) { r = 206; g = 64; b = 34; }          // red clumps
+      else if (cl > 0.48) { r = 220; g = 126; b = 44; }    // orange clumps
+      else if (cl > 0.38) { r = 134; g = 134; b = 48; }    // leftover green
+      else { r = 46; g = 32; b = 27; }                     // dark gaps
+      var sp = hash2(x + 11, y + 47);
+      if (sp < 0.14) { r *= 0.7; g *= 0.7; b *= 0.7; }
+      return [r, g, b];
+    });
+  }
+  function plankCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var row = Math.floor(y / 16), ry = y - row * 16;
+      var tint = (hash2(row, 9) * 2 - 1) * 12;
+      var r = 142 + tint, g = 104 + tint * 0.8, b = 70 + tint * 0.6;
+      if (ry < 1) { r = 56; g = 40; b = 26; }
+      var grain = vnoise(x / 26, (y + row * 17) / 3.6, 8, 2);
+      if (grain > 0.60) { var n = (grain - 0.60) * 1.5; r *= 1 - n * 0.45; g *= 1 - n * 0.5; b *= 1 - n * 0.5; }
+      var sp = hash2(x + 17, y + 8);
+      if (sp < 0.07) { r *= 0.8; g *= 0.8; b *= 0.8; }
+      return [r, g, b];
+    });
+  }
+  function roofCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var col = Math.floor(x / 8), cx = x - col * 8;
+      var row = Math.floor(y / 10), ry = y - row * 10;
+      var r = 52, g = 42, b = 46;
+      if (cx === 0) { r *= 0.5; g *= 0.5; b *= 0.5; }          // tile seams
+      if (ry === 0) { r *= 1.5; g *= 1.45; b *= 1.4; }          // course highlight
+      if (ry === 1) { r *= 0.7; g *= 0.7; b *= 0.7; }
+      var tint = (hash2(col, row * 3) * 2 - 1) * 8;
+      r += tint; g += tint; b += tint;
+      var moss = vnoise(x / 16, y / 16, 4, 2);
+      if (moss > 0.72) { var n = (moss - 0.72) * 1.8; r *= 1 - n * 0.4; g *= 1; b *= 1 - n * 0.3; }
+      return [r, g, b];
+    });
+  }
+
+  var gravelTex = texFrom(gravelCanvas());
+  var stoneTex = texFrom(stoneCanvas());
+  var toriiTex = texFrom(toriiCanvas());
+  var waterTex = texFrom(waterCanvas());
+  var barkTex = texFrom(barkCanvas());
+  var leafTex = texFrom(leafCanvas());
+  var plankTex = texFrom(plankCanvas());
+  var roofTex = texFrom(roofCanvas());
+
+  var matGravel = ps1Material(gravelTex);
+  var matStone = ps1Material(stoneTex);
+  var matTorii = ps1Material(toriiTex);
+  var matWater = ps1Material(waterTex);
+  var matBark = ps1Material(barkTex);
+  var matLeaf = ps1Material(leafTex);
+  var matPlank = ps1Material(plankTex);
+  var matRoof = ps1Material(roofTex);
+  var matDark = ps1Material(PS1.solidTexture(24, 20, 20));
+  var matLanternGlow = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 205, 120)));
+
+  // ------------------------- lighting ---------------------------------
+  var SUN = new THREE.Vector3(-0.62, 0.20, -0.50).normalize();   // low WNW sun, sits in frame upper-left
+  var SUN_COL = [1.32, 0.98, 0.62];
+  var SKY_AMB = [0.36, 0.30, 0.38];
+  var GND_AMB = [0.25, 0.19, 0.16];
+  var shrineRelight = function (x, y, z, nx, ny, nz) {
+    var ndl = Math.max(0, nx * SUN.x + ny * SUN.y + nz * SUN.z);
+    var hemi = 0.5 + 0.5 * ny;
+    var r = SUN_COL[0] * ndl * 1.15 + GND_AMB[0] + (SKY_AMB[0] - GND_AMB[0]) * hemi;
+    var g = SUN_COL[1] * ndl * 1.15 + GND_AMB[1] + (SKY_AMB[1] - GND_AMB[1]) * hemi;
+    var b = SUN_COL[2] * ndl * 1.15 + GND_AMB[2] + (SKY_AMB[2] - GND_AMB[2]) * hemi;
+    return [Math.min(1.18, r), Math.min(1.15, g), Math.min(1.12, b)];
+  };
+
+  PS1.registerScene(function () {
+    setRelight(shrineRelight);
+    var scene = new THREE.Scene();
+    var decals = PS1.newDecalSet();
+    var colliders = [];
+
+    // sun light (drives directional shadow map)
+    var sun = new THREE.DirectionalLight(0xffc890, 1);
+    sun.position.copy(SUN).multiplyScalar(30);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.camera.near = 2; sun.shadow.camera.far = 70;
+    sun.shadow.camera.left = -20; sun.shadow.camera.right = 20;
+    sun.shadow.camera.top = 20; sun.shadow.camera.bottom = -20;
+    sun.shadow.bias = -0.004; sun.shadow.normalBias = 0.05;
+    scene.add(sun); scene.add(sun.target);
+
+    // sky + distant ridge silhouettes
+    scene.add(PS1.makeSky({
+      top: [0.16, 0.11, 0.30], horizon: [0.94, 0.52, 0.24], bottom: [0.13, 0.09, 0.11],
+      sunDir: SUN.toArray(), sunCol: [1.3, 0.82, 0.42], sunCut: 0.9952, sunGlow: 0.55,
+      radius: 90
+    }));
+    setRelight(function (x, y, z) {           // flat haze-tinted silhouettes
+      var k = 0.85 + y * 0.012;
+      return [0.17 * k, 0.125 * k, 0.24 * k];
+    });
+    [[0, -50, 60, 17], [-52, -6, 46, 13], [50, 4, 48, 15], [-24, 48, 52, 12]].forEach(function (m) {
+      var cx = m[0], cz = m[1], w = m[2], h = m[3];
+      scene.add(quadCorners(matDark,
+        [cx - w / 2, -2, cz], [cx + w / 2, -2, cz], [cx + w / 6, h, cz + w / 3], [cx - w / 6, h * 0.8, cz + w / 3]));
+    });
+    setRelight(shrineRelight);
+
+    // ground: raked gravel court
+    scene.add(PS1.groundGrid(matGravel, 0, 0, 34, 30, 10, 1, 0, 1));
+
+    // ---------------- torii gates along the approach -------------------
+    function torii(z) {
+      var g = new THREE.Group();
+      g.add(cs(boxMesh(matTorii, -2.30, 1.70, z, 0.30, 3.40, 0.30, 1.6, 0.035)));
+      g.add(cs(boxMesh(matTorii, 2.30, 1.70, z, 0.30, 3.40, 0.30, 1.6, -0.035)));
+      g.add(cs(boxMesh(matTorii, 0, 3.42, z, 6.10, 0.26, 0.34, 1.6)));            // kasagi
+      g.add(cs(boxMesh(matTorii, -3.05, 3.47, z, 0.28, 0.30, 0.30, 1.6, 0.16)));  // upturned end L
+      g.add(cs(boxMesh(matTorii, 3.05, 3.47, z, 0.28, 0.30, 0.30, 1.6, -0.16)));  // upturned end R
+      g.add(cs(boxMesh(matDark, 0, 3.20, z, 5.30, 0.14, 0.26, 2)));               // shimaki (black)
+      g.add(cs(boxMesh(matTorii, 0, 2.62, z, 5.00, 0.20, 0.20, 1.6)));            // nuki
+      g.add(cs(boxMesh(matDark, 0, 2.92, z, 0.30, 0.44, 0.10, 2)));               // plaque
+      scene.add(g);
+      colliders.push({ x0: -2.55, z0: z - 0.25, x1: -2.05, z1: z + 0.25 });
+      colliders.push({ x0: 2.05, z0: z - 0.25, x1: 2.55, z1: z + 0.25 });
+    }
+    torii(7.5); torii(3.8); torii(0.2);
+
+    // ---------------- stone lanterns (tōrō) -----------------------------
+    var lanternWindows = [];
+    function stoneLantern(x, z) {
+      var g = new THREE.Group();
+      g.add(cs(prismMesh(matStone, x, z, 0.44, 0.16, 6, 1.2, 0.4)));
+      g.add(cs(prismMesh(matStone, x, z, 0.15, 0.92, 6, 1.0, 2.2, null, 0.16)));
+      g.add(cs(prismMesh(matStone, x, z, 0.36, 0.10, 6, 1.2, 0.3, null, 1.08)));
+      g.add(cs(boxMesh(matStone, x, 1.44, z, 0.46, 0.46, 0.46, 1.2)));            // fire box
+      g.add(boxMesh(matLanternGlow, x - 0.275, 1.44, z, 0.02, 0.26, 0.26, 2, 0, [1.9, 1.35, 0.55]));
+      g.add(boxMesh(matLanternGlow, x + 0.275, 1.44, z, 0.02, 0.26, 0.26, 2, 0, [1.9, 1.35, 0.55]));
+      g.add(boxMesh(matLanternGlow, x, 1.44, z - 0.275, 0.26, 0.26, 0.02, 2, 0, [1.9, 1.35, 0.55]));
+      g.add(boxMesh(matLanternGlow, x, 1.44, z + 0.275, 0.26, 0.26, 0.02, 2, 0, [1.9, 1.35, 0.55]));
+      g.add(cs(prismMesh(matStone, x, z, 0.55, 0.34, 4, 1.4, 0.6, null, 1.67)));  // roof pyramid
+      g.add(cs(boxMesh(matStone, x, 2.06, z, 0.10, 0.28, 0.10, 2)));              // finial
+      scene.add(g);
+      lanternWindows.push(matLanternGlow);
+      colliders.push({ x0: x - 0.42, z0: z - 0.42, x1: x + 0.42, z1: z + 0.42 });
+      decals.oct(x, z, 0.55, PS1.blobMat, 0.014);
+    }
+    stoneLantern(-2.35, 5.6); stoneLantern(2.35, 5.6);
+    stoneLantern(-2.35, -1.8); stoneLantern(2.35, -1.8);
+    stoneLantern(-7.9, 4.9);   // beside the pond
+
+    // ---------------- koi pond -----------------------------------------
+    var POND = { x: -5.6, z: 1.4, w: 5.2, d: 6.6 };
+    var pondWater = PS1.groundGrid(matWater, POND.x, POND.z, POND.w - 0.5, POND.d - 0.5, 3, 0.5, 0.10, 1);   // >1 bucket above the gravel bed
+    scene.add(pondWater);
+    // stone rim
+    [[POND.x, POND.z - POND.d / 2, POND.w + 0.7, 0.35], [POND.x, POND.z + POND.d / 2, POND.w + 0.7, 0.35],
+     [POND.x - POND.w / 2, POND.z, 0.35, POND.d + 0.7], [POND.x + POND.w / 2, POND.z, 0.35, POND.d + 0.7]]
+      .forEach(function (r) {
+        scene.add(cs(boxMesh(matStone, r[0], 0.11, r[1], r[2], 0.22, r[3], 1.1)));
+      });
+    colliders.push({ x0: POND.x - POND.w / 2 - 0.3, z0: POND.z - POND.d / 2 - 0.3, x1: POND.x + POND.w / 2 + 0.3, z1: POND.z + POND.d / 2 + 0.3 });
+    // lily pads
+    for (var i = 0; i < 6; i++) {
+      var a = hash2(i, 77) * Math.PI * 2, rr = 0.5 + hash2(i, 31) * 1.5;
+      scene.add(prismMesh(matLeaf, POND.x + Math.cos(a) * rr, POND.z + Math.sin(a) * rr * 1.1,
+        0.14 + hash2(i, 5) * 0.10, 0.02, 8, 1, 1, null, 0.035));
+    }
+    // swimming koi
+    var koi = [];
+    for (i = 0; i < 3; i++) {
+      var k = new THREE.Group();
+      k.add(boxMesh(PS1.ps1Material(PS1.solidTexture(235, 130, 40)), 0, 0, 0, 0.34, 0.06, 0.13, 1));
+      k.add(boxMesh(PS1.ps1Material(PS1.solidTexture(220, 240, 245)), -0.20, 0, 0, 0.12, 0.05, 0.09, 1));
+      k.userData = { r: 0.7 + hash2(i, 9) * 1.3, sp: (0.25 + hash2(i, 13) * 0.2) * (i % 2 ? 1 : -1), ph: hash2(i, 21) * Math.PI * 2 };
+      scene.add(k); koi.push(k);
+    }
+
+    // ---------------- maple trees --------------------------------------
+    function maple(x, z, s) {
+      var g = new THREE.Group();
+      g.add(cs(prismMesh(matBark, x, z, 0.20 * s, 1.5 * s, 6, 1.2, 2.4)));
+      g.add(cs(prismMesh(matBark, x, z, 0.13 * s, 0.8 * s, 6, 1.0, 1.6, null, 1.5 * s)));
+      g.add(cs(blobMesh(matLeaf, x + 0.3 * s, 2.7 * s, z - 0.2 * s, 1.5 * s, 0.85, 0.4,
+        function (sd, y) {
+          if (y > 3.4 * s) return [1.05, 0.42, 0.25];
+          return sd > 0.5 ? [1.0, 0.5, 0.26] : [0.94, 0.62, 0.30];
+        })));
+      g.add(cs(blobMesh(matLeaf, x - 0.9 * s, 2.1 * s, z + 0.7 * s, 1.0 * s, 0.8, 0.45,
+        function () { return [0.9, 0.55, 0.32]; })));
+      scene.add(g);
+      colliders.push({ x0: x - 0.45, z0: z - 0.45, x1: x + 0.45, z1: z + 0.45 });
+      // fallen-leaf carpet decal
+      var matLeafDrop = PS1.decalMaterial(0.24, 0.08, 0.05, 0.5);
+      decals.oct(x, z, 1.9 * s, matLeafDrop, 0.008, Math.round(x * 7 + z));
+    }
+    maple(15.4, 2.4, 1.2); maple(10.2, -2.6, 1.0); maple(12.4, -6.2, 1.35);
+    maple(-10.6, -6.2, 1.1); maple(-11.4, 7.2, 0.9); maple(13.6, 3.2, 1.05);
+
+    // ---------------- stepping-stone path ------------------------------
+    for (i = 0; i < 17; i++) {
+      var sz = 9.6 - i * 0.92;
+      if (sz < -5.4) break;
+      var sx = Math.sin(i * 1.7) * 0.14;
+      scene.add(cs(boxMesh(matStone, sx, 0.035, sz, 0.78 + hash2(i, 3) * 0.22, 0.07, 0.55 + hash2(i, 7) * 0.15, 1.0, hash2(i, 11) * 0.1 - 0.05)));
+    }
+
+    // ---------------- shrine building (north backdrop) ------------------
+    var SHX = 0, SHZ = -10.6;
+    scene.add(cs(boxMesh(matStone, SHX, 0.30, SHZ, 11, 0.60, 4.6, 1.0)));         // platform
+    scene.add(cs(boxMesh(matStone, SHX, 0.14, SHZ + 2.7, 4.4, 0.28, 1.0, 1.0)));  // step 1
+    scene.add(cs(boxMesh(matStone, SHX, 0.05, SHZ + 3.5, 3.0, 0.10, 0.7, 1.0)));  // step 2
+    [-4.4, -1.6, 1.6, 4.4].forEach(function (cx2) {
+      scene.add(cs(prismMesh(matTorii, cx2, SHZ + 1.7, 0.17, 3.0, 6, 1.4, 4.5)));
+    });
+    scene.add(PS1.wallSurface(matPlank, [SHX - 5.0, 0.60, SHZ - 1.4], [SHX + 5.0, 0.60, SHZ - 1.4],
+      [SHX + 5.0, 3.55, SHZ - 1.4], [SHX - 5.0, 3.55, SHZ - 1.4], 5, 1.5, 0, 0, 1));   // back wall
+    // shoji doors on the front face
+    for (i = -2; i <= 2; i++) {
+      scene.add(boxMesh(matPlank, SHX + i * 1.85, 2.05, SHZ + 1.68, 1.55, 2.75, 0.10, 1.2));
+    }
+    // roof: two big slopes + ridge
+    scene.add(cs(quadCorners(matRoof,
+      [SHX - 6.4, 3.55, SHZ - 2.6], [SHX + 6.4, 3.55, SHZ - 2.6],
+      [SHX + 5.4, 5.30, SHZ + 0.1], [SHX - 5.4, 5.30, SHZ + 0.1], 6, 3)));            // back slope
+    scene.add(cs(quadCorners(matRoof,
+      [SHX - 6.9, 3.30, SHZ + 3.6], [SHX + 6.9, 3.30, SHZ + 3.6],
+      [SHX + 5.4, 5.30, SHZ + 0.15], [SHX - 5.4, 5.30, SHZ + 0.15], 6.4, 2.6)));      // front slope
+    scene.add(cs(boxMesh(matDark, SHX, 5.34, SHZ + 0.1, 11.2, 0.22, 0.34, 2)));      // ridge
+    colliders.push({ x0: SHX - 5.8, z0: SHZ - 2.4, x1: SHX + 5.8, z1: SHZ + 2.2 });
+
+    // ---------------- komainu (guardian statues) -----------------------
+    function komainu(x, z) {
+      var g = new THREE.Group();
+      g.add(cs(prismMesh(matStone, x, z, 0.34, 0.52, 6, 1.2, 0.6)));
+      g.add(cs(boxMesh(matStone, x, 0.72, z, 0.62, 0.34, 0.34, 1.2)));
+      g.add(cs(boxMesh(matStone, x, 1.00, z, 0.30, 0.30, 0.32, 1.2)));
+      g.add(cs(boxMesh(matStone, x, 1.18, z + 0.10, 0.10, 0.09, 0.12, 2)));          // snout
+      g.add(cs(boxMesh(matStone, x - 0.10, 1.22, z, 0.07, 0.14, 0.06, 2, 0.3)));     // ear
+      g.add(cs(boxMesh(matStone, x + 0.10, 1.22, z, 0.07, 0.14, 0.06, 2, -0.3)));
+      scene.add(g);
+      colliders.push({ x0: x - 0.45, z0: z - 0.45, x1: x + 0.45, z1: z + 0.45 });
+    }
+    komainu(-2.1, -5.8); komainu(2.1, -5.4);
+
+    // ---------------- moss + petals decals ------------------------------
+    var matMoss = PS1.decalMaterial(0.06, 0.10, 0.05, 0.42);
+    [[-3.4, 8.6], [3.6, 7.2], [-8.9, 5.9], [4.2, -1.2], [-4.0, -2.6], [9.0, -4.4]].forEach(function (p, i2) {
+      decals.oct(p[0], p[1], 0.5 + hash2(i2, 3) * 0.7, matMoss, 0.006, i2 + 20);
+    });
+    decals.oct(POND.x + 3.4, POND.z + 3.8, 0.8, PS1.decalMaterial(0.30, 0.16, 0.13, 0.34), 0.009, 31);  // petal drift
+    scene.add(decals.blobGroup); scene.add(decals.decalGroup);
+
+
+    // ---------------- v6 detail pass ------------------------------------
+    // ema plaque rack beside the shrine steps
+    (function () {
+      var ex = 4.3, ez = -6.9;
+      scene.add(cs(boxMesh(matBark, ex, 1.05, ez, 0.10, 2.1, 0.10, 2)));
+      scene.add(cs(boxMesh(matBark, ex, 1.05, ez + 1.7, 0.10, 2.1, 0.10, 2)));
+      scene.add(cs(boxMesh(matBark, ex, 2.02, ez + 0.85, 0.08, 0.14, 1.9, 2)));
+      for (var e = 0; e < 6; e++) {
+        scene.add(boxMesh(matPlank, ex + 0.10, 1.80 - Math.floor(e / 2) * 0.30, ez + 0.35 + (e % 2) * 1.0, 0.03, 0.24, 0.30, 2, 0, [0.86, 0.72, 0.5]));
+      }
+      colliders.push({ x0: ex - 0.15, z0: ez - 0.15, x1: ex + 0.15, z1: ez + 1.85 });
+    })();
+    // stone benches flanking the approach
+    function benchLegs(x, z) {
+      scene.add(cs(boxMesh(matStone, x, 0.16, z - 0.55, 0.40, 0.32, 0.18, 1.2)));
+      scene.add(cs(boxMesh(matStone, x, 0.16, z + 0.55, 0.40, 0.32, 0.18, 1.2)));
+      scene.add(cs(boxMesh(matStone, x, 0.40, z, 0.55, 0.14, 1.55, 1.0)));
+      colliders.push({ x0: x - 0.35, z0: z - 0.85, x1: x + 0.35, z1: z + 0.85 });
+    }
+    benchLegs(2.75, 4.6); benchLegs(-2.75, -3.4);
+    // low tamagaki fence runs along the approach
+    function fenceRun(x, z0, z1) {
+      for (var zz = z0; zz <= z1; zz += 1.0) scene.add(cs(boxMesh(matBark, x, 0.45, zz, 0.09, 0.9, 0.09, 2)));
+      scene.add(boxMesh(matBark, x, 0.74, (z0 + z1) / 2, 0.05, 0.08, z1 - z0 + 0.12, 1.2));
+      scene.add(boxMesh(matBark, x, 0.40, (z0 + z1) / 2, 0.05, 0.08, z1 - z0 + 0.12, 1.2));
+    }
+    fenceRun(3.3, 2.2, 9.2); fenceRun(-3.3, -3.4, 1.8);
+    // shrubs tucked into corners
+    [[4.7, 6.4], [-4.3, 7.6], [8.8, 7.8], [-8.4, -3.4], [5.4, -4.8], [-7.2, 8.4]].forEach(function (b, i) {
+      scene.add(cs(blobMesh(matLeaf, b[0], 0.30, b[1], 0.42 + hash2(i, 3) * 0.2, 0.75, 0.4,
+        function (sd) { return sd > 0.6 ? [0.82, 0.62, 0.34] : [0.74, 0.56, 0.36]; })));
+    });
+    // short ground lanterns by the entrance
+    function shortLantern(x, z) {
+      scene.add(cs(prismMesh(matStone, x, z, 0.30, 0.34, 6, 1.4, 0.6)));
+      scene.add(boxMesh(matLanternGlow, x, 0.18, z + 0.305, 0.20, 0.16, 0.02, 2, 0, [1.9, 1.35, 0.55]));
+      scene.add(boxMesh(matLanternGlow, x, 0.18, z - 0.305, 0.20, 0.16, 0.02, 2, 0, [1.9, 1.35, 0.55]));
+      scene.add(cs(prismMesh(matStone, x, z, 0.38, 0.10, 4, 1.4, 0.3, null, 0.34)));
+      colliders.push({ x0: x - 0.35, z0: z - 0.35, x1: x + 0.35, z1: z + 0.35 });
+    }
+    shortLantern(-1.9, 10.6); shortLantern(1.9, 10.6);
+    // sake barrels stacked on the shrine platform
+    [[4.2, -9.6, 0.6], [4.2, -10.5, 0.6], [5.0, -10.05, 0.6], [4.55, -10.05, 1.24]].forEach(function (b) {
+      scene.add(cs(prismMesh(matPlank, b[0], b[1], 0.33, 0.60, 8, 2, 0.9, null, b[2])));
+      scene.add(prismMesh(matTorii, b[0], b[1], 0.35, 0.09, 8, 2, 0.3, null, b[2] + 0.16));
+    });
+    // incense burner in front of the steps + a wisp of smoke
+    scene.add(cs(prismMesh(matStone, 1.5, -7.5, 0.24, 0.44, 6, 1.5, 0.6)));
+    scene.add(cs(prismMesh(matStone, 1.5, -7.5, 0.42, 0.44, 8, 1.8, 0.6, null, 0.44)));
+    colliders.push({ x0: 1.05, z0: -7.95, x1: 1.95, z1: -7.05 });
+    var matAsh = ps1Material(PS1.solidTexture(90, 88, 84));
+    scene.add(boxMesh(matAsh, 1.5, 0.90, -7.5, 0.55, 0.05, 0.55, 2));
+    var incense = PS1.makeParticles({
+      mode: 'steam', count: 36, color: [0.58, 0.56, 0.53],
+      size: 0.035, speed: 0.45, sway: 0.12,
+      area: [1.2, 1.8, -7.8, -7.2, 2.4]
+    });
+    scene.add(incense);
+    // small guide signs
+    function signPost(x, z) {
+      scene.add(cs(boxMesh(matBark, x, 0.55, z, 0.07, 1.1, 0.07, 2)));
+      scene.add(boxMesh(matPlank, x + 0.06, 0.95, z, 0.04, 0.34, 0.26, 2));
+      colliders.push({ x0: x - 0.12, z0: z - 0.12, x1: x + 0.12, z1: z + 0.12 });
+    }
+    signPost(-4.9, 10.5); signPost(4.9, -3.2);
+    // extra moss + fallen-leaf drifts
+    var matLeafPile = PS1.decalMaterial(0.30, 0.13, 0.08, 0.42);
+    [[3.9, 8.8], [-3.7, -4.9], [8.2, -2.4], [-9.4, 5.6]].forEach(function (p, i) {
+      decals.oct(p[0], p[1], 0.6 + hash2(i, 9) * 0.5, matLeafPile, 0.006, 90 + i);
+    });
+    // ---------------- falling petals ------------------------------------
+    var petals = PS1.makeParticles({
+      mode: 'petal', count: 210, color: [0.93, 0.52, 0.47],
+      size: 0.035, speed: 0.55, sway: 0.55,
+      area: [-13, 13, -11, 12, 7.5]
+    });
+    scene.add(petals);
+
+    return {
+      name: '黄昏神社庭院',
+      scene: scene,
+      colliders: colliders,
+      bounds: { x0: -12.5, x1: 12.5, z0: -7.6, z1: 12.5 },
+      spawn: [10.8, 8.8, Math.atan2(-(-3.5 - 10.8), -(-5.5 - 8.8)), 0.0],
+      idle: { pos: [10.8, 1.62, 8.8], target: [-3.5, 2.0, -5.5] },
+      fog: { color: [0.60, 0.37, 0.26], near: 26, far: 64 },
+      noFlicker: true,
+      blobGroup: decals.blobGroup,
+      particles: [petals, incense],
+      update: function (t) {
+        waterTex.offset.x = t * 0.018;
+        waterTex.offset.y = t * 0.042;
+        var glow = 0.9 + 0.08 * Math.sin(t * 11.3) + 0.04 * Math.sin(t * 29.7 + 1.1);
+        matLanternGlow.uniforms.uFlicker.value = glow;
+        koi.forEach(function (k) {
+          var d = k.userData;
+          var a = d.ph + t * d.sp;
+          var px = POND.x + Math.cos(a) * d.r * 0.8;
+          var pz = POND.z + Math.sin(a) * d.r;
+          k.position.set(px, 0.055, pz);
+          k.rotation.y = -a + (d.sp > 0 ? Math.PI / 2 : -Math.PI / 2);
+        });
+      }
+    };
+  });
+})();
+
+;
+(function () {
+  'use strict';
+  // ======================= 浓雾夜小镇街道 ==============================
+  var texFrom = PS1.texFrom, pixelLoop = PS1.pixelLoop, newCanvas = PS1.newCanvas;
+  var hash2 = PS1.hash2, vnoise = PS1.vnoise;
+  var boxMesh = PS1.boxMesh, prismMesh = PS1.prismMesh, quadMesh = PS1.quadMesh;
+  var quadCorners = PS1.quadCorners;
+  var cs = PS1.cs, setRelight = PS1.setRelight;
+  var ps1Material = PS1.ps1Material;
+
+  // ------------------------- textures ---------------------------------
+  function asphaltCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 6, y / 6, 9, 3);
+      var r = 46 + n * 26, g = 47 + n * 26, b = 53 + n * 28;
+      var sp = hash2(x, y);
+      if (sp < 0.10) { r *= 0.7; g *= 0.7; b *= 0.7; }
+      if (sp > 0.955) { r += 42; g += 44; b += 52; }        // wet glints
+      // center dashed line
+      var lane = Math.abs(x - 32) < 3;
+      var dash = (Math.floor(y / 12) % 2) === 0;
+      if (lane && dash) { r = 175; g = 152; b = 48; }
+      else if (lane && !dash) { r *= 1.05; g *= 1.05; b *= 1.05; }
+      // cracks
+      var cr = vnoise(x / 18 + 5, y / 4, 6, 2);
+      if (cr > 0.78) { r *= 0.6; g *= 0.6; b *= 0.6; }
+      return [r, g, b];
+    });
+  }
+  function walkCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var row = Math.floor(y / 16), ry = y - row * 16;
+      var x2 = x + (row & 1) * 16;
+      var col = Math.floor(x2 / 32), cx = x2 - col * 32;
+      var tint = (hash2(col % 2, row * 3) * 2 - 1) * 9;
+      var r = 96 + tint, g = 96 + tint, b = 94 + tint;
+      var n = vnoise(x / 8, y / 8, 8, 2);
+      r *= 0.9 + n * 0.2; g *= 0.9 + n * 0.2; b *= 0.9 + n * 0.2;
+      if (ry < 1 || cx < 1) { r *= 0.55; g *= 0.55; b *= 0.55; }
+      var sp = hash2(x + 5, y + 33);
+      if (sp < 0.08) { r *= 0.82; g *= 0.82; b *= 0.82; }
+      return [r, g, b];
+    });
+  }
+  function sidingCanvas(br, bg, bb) {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var row = Math.floor(y / 10), ry = y - row * 10;
+      var tint = (hash2(row, 3) * 2 - 1) * 8;
+      var r = br + tint, g = bg + tint, b = bb + tint;
+      if (ry < 1) { r *= 0.5; g *= 0.5; b *= 0.5; }
+      else if (ry === 1) { r *= 1.15; g *= 1.15; b *= 1.15; }
+      var grain = vnoise(x / 30, y / 5, 8, 2);
+      r *= 0.92 + grain * 0.16; g *= 0.92 + grain * 0.16; b *= 0.92 + grain * 0.16;
+      var dirt = vnoise(x / 14, y / 40, 4, 2);
+      if (dirt > 0.62) { var n = (dirt - 0.62) * 1.2; r *= 1 - n * 0.4; g *= 1 - n * 0.4; b *= 1 - n * 0.4; }
+      return [r, g, b];
+    });
+  }
+  function shingleCanvas(br, bg, bb) {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var col = Math.floor(x / 10), cx = x - col * 10;
+      var row = Math.floor(y / 12), ry = y - row * 12;
+      var tint = (hash2(col, row * 5) * 2 - 1) * 9;
+      var r = br + tint, g = bg + tint, b = bb + tint;
+      if (ry < 1 || cx < 1) { r *= 0.45; g *= 0.45; b *= 0.45; }
+      if (ry === 1) { r *= 1.3; g *= 1.3; b *= 1.3; }
+      var sp = hash2(x + 19, y + 2);
+      if (sp < 0.07) { r *= 0.75; g *= 0.75; b *= 0.75; }
+      return [r, g, b];
+    });
+  }
+  function metalCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 10, y / 10, 6, 2);
+      var r = 52 + n * 20, g = 53 + n * 20, b = 57 + n * 22;
+      if (x % 21 < 1) { r *= 0.7; g *= 0.7; b *= 0.7; }
+      var rust = vnoise(x / 12 + 3, y / 12, 5, 2);
+      if (rust > 0.72) { var k = (rust - 0.72) * 2.5; r += (90 - r) * k; g += (50 - g) * k; b += (28 - b) * k; }
+      return [r, g, b];
+    });
+  }
+  function grassCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 5, y / 5, 9, 2);
+      var r = 22 + n * 24, g = 30 + n * 30, b = 20 + n * 18;
+      var sp = hash2(x + 3, y + 9);
+      if (sp < 0.2) { r *= 0.8; g *= 0.8; b *= 0.8; }
+      return [r, g, b];
+    });
+  }
+
+  var asphaltTex = texFrom(asphaltCanvas());
+  var walkTex = texFrom(walkCanvas());
+  var sidBlue = texFrom(sidingCanvas(96, 102, 112));
+  var sidTan = texFrom(sidingCanvas(128, 106, 82));
+  var sidGreen = texFrom(sidingCanvas(88, 100, 88));
+  var roofDark = texFrom(shingleCanvas(46, 42, 48));
+  var roofRed = texFrom(shingleCanvas(102, 58, 46));
+  var metalTex = texFrom(metalCanvas());
+  var grassTex = texFrom(grassCanvas());
+
+  var matAsphalt = ps1Material(asphaltTex);
+  var matWalk = ps1Material(walkTex);
+  var matSidB = ps1Material(sidBlue);
+  var matSidT = ps1Material(sidTan);
+  var matSidG = ps1Material(sidGreen);
+  var matRoofD = ps1Material(roofDark);
+  var matRoofR = ps1Material(roofRed);
+  var matMetal = ps1Material(metalTex);
+  var matGrass = ps1Material(grassTex);
+  var matDarkWood = ps1Material(PS1.solidTexture(66, 56, 46));
+  var matGlassDark = ps1Material(PS1.solidTexture(12, 14, 20));
+  var matWindowWarm = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 190, 90)));
+  var matWindowCold = PS1.privateFlicker(ps1Material(PS1.solidTexture(140, 190, 255)));
+  var matLampGlow = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 220, 150)));
+  var matHydrant = ps1Material(PS1.solidTexture(150, 40, 34));
+
+  // street lamps: baked as point lights into vertex colors
+  var LAMPS = [
+    [2.6, -14], [-2.6, -7], [2.6, 0], [-2.6, 7], [2.6, 14]
+  ];
+  var MOON = new THREE.Vector3(0.30, 0.80, -0.42).normalize();
+
+  var townRelight = function (x, y, z, nx, ny, nz) {
+    // dim cool moonlight + hemispheric night ambience + warm lamp pools
+    var ndl = Math.max(0, nx * MOON.x + ny * MOON.y + nz * MOON.z);
+    var hemi = 0.5 + 0.5 * ny;
+    var r = 0.24 + 0.28 * ndl + 0.07 * hemi;
+    var g = 0.27 + 0.32 * ndl + 0.08 * hemi;
+    var b = 0.38 + 0.42 * ndl + 0.11 * hemi;
+    for (var i = 0; i < LAMPS.length; i++) {
+      var dx = LAMPS[i][0] - x, dz = LAMPS[i][1] - z, dy = 3.85 - y;
+      var d2 = dx * dx + dy * dy + dz * dz;
+      var fall = 1.6 / (1 + d2 * 0.10);
+      var inv = 1 / (Math.sqrt(d2) + 1e-4);
+      var nd = Math.max(0, (dx * nx + dy * ny + dz * nz) * inv);
+      var w = fall * (0.45 + 0.55 * nd);
+      r += w * 1.45; g += w * 1.02; b += w * 0.48;
+    }
+    return [Math.min(1.15, r), Math.min(1.12, g), Math.min(1.1, b)];
+  };
+
+  PS1.registerScene(function () {
+    setRelight(townRelight);
+    var scene = new THREE.Scene();
+    var decals = PS1.newDecalSet();
+    var colliders = [];
+
+    // moon (drives the shadow map)
+    var moon = new THREE.DirectionalLight(0x8899cc, 1);
+    moon.position.copy(MOON).multiplyScalar(35);
+    moon.castShadow = true;
+    moon.shadow.mapSize.set(1024, 1024);
+    moon.shadow.camera.near = 2; moon.shadow.camera.far = 80;
+    moon.shadow.camera.left = -22; moon.shadow.camera.right = 22;
+    moon.shadow.camera.top = 22; moon.shadow.camera.bottom = -22;
+    moon.shadow.bias = -0.004; moon.shadow.normalBias = 0.05;
+    scene.add(moon); scene.add(moon.target);
+
+    // sky: dim stars, faint moon, fog-matched horizon
+    scene.add(PS1.makeSky({
+      top: [0.015, 0.025, 0.05], horizon: [0.115, 0.145, 0.195], bottom: [0.05, 0.06, 0.08],
+      sunDir: MOON.toArray(), sunCol: [0.5, 0.6, 0.8], sunCut: 0.9994, sunGlow: 0.08,
+      stars: 0.32, radius: 90
+    }));
+
+    // ground plane far beyond the street (drowns in fog)
+    scene.add(PS1.groundGrid(matGrass, 0, 0, 90, 90, 6, 1, -0.10, 1));
+    // road + sidewalks
+    scene.add(PS1.groundGrid(matAsphalt, 0, 0, 7, 44, 3, 1, 0.0, 1));
+    scene.add(PS1.groundGrid(matWalk, -4.55, 0, 2.1, 44, 3, 1, 0.12, 1));
+    scene.add(PS1.groundGrid(matWalk, 4.55, 0, 2.1, 44, 3, 1, 0.12, 1));
+
+    // ---------------- houses -------------------------------------------
+    function house(sx, z0, w, d, h, siding, roof, flip) {
+      // flip=+1: house west of street (front faces +x); -1: east (faces -x)
+      var front = sx + flip * d / 2;
+      var g = new THREE.Group();
+      g.add(cs(boxMesh(siding, sx, h / 2, z0, d, h, w, 1.0)));
+      // gable roof: ridge runs along z
+      var rh = 1.5;
+      g.add(cs(quadCorners(roof,
+        [sx - d / 2 - 0.4, h, z0 - w / 2 - 0.4], [sx + d / 2 + 0.4, h, z0 - w / 2 - 0.4],
+        [sx + d / 2, h + rh, z0], [sx - d / 2, h + rh, z0], d * 0.6, w * 0.6)));
+      g.add(cs(quadCorners(roof,
+        [sx - d / 2 - 0.4, h, z0 + w / 2 + 0.4], [sx + d / 2 + 0.4, h, z0 + w / 2 + 0.4],
+        [sx + d / 2, h + rh, z0], [sx - d / 2, h + rh, z0], d * 0.6, w * 0.6)));
+      // gable ends
+      g.add(cs(quadCorners(siding,
+        [sx + d / 2, h, z0 - w / 2], [sx + d / 2, h, z0 + w / 2], [sx + d / 2, h + rh, z0], [sx + d / 2, h + rh, z0], w * 0.5, 0.8)));
+      g.add(cs(quadCorners(siding,
+        [sx - d / 2, h, z0 - w / 2], [sx - d / 2, h, z0 + w / 2], [sx - d / 2, h + rh, z0], [sx - d / 2, h + rh, z0], w * 0.5, 0.8)));
+      // door + windows on the street face
+      var fx = front + flip * 0.03;
+      g.add(boxMesh(matDarkWood, fx, 1.05, z0 - w * 0.22, 0.08, 2.1, 1.0, 2));
+      var lit = hash2(Math.round(z0), Math.round(sx)) ;
+      var winMat = lit > 0.72 ? matWindowWarm : matGlassDark;
+      g.add(boxMesh(winMat, fx, 1.7, z0 + w * 0.18, 0.02, 0.9, 0.8, 2, 0,
+        lit > 0.72 ? [1.35, 0.95, 0.42] : null));
+      if (hash2(Math.round(z0 * 3), 7) > 0.5) {
+        g.add(boxMesh(matWindowWarm, fx, 1.7, z0 - w * 0.28, 0.02, 0.9, 0.8, 2, 0, [1.35, 0.95, 0.42]));
+      }
+      scene.add(g);
+      colliders.push({ x0: sx - d / 2 - 0.4, z0: z0 - w / 2 - 0.4, x1: sx + d / 2 + 0.4, z1: z0 + w / 2 + 0.4 });
+    }
+    house(-8.2, -12.5, 7, 5.4, 3.4, matSidB, matRoofD, 1);   // W row
+    house(-8.4, -3.5, 6.5, 5.8, 3.1, matSidT, matRoofR, 1);
+    house(-8.0, 5.5, 7.5, 5.2, 3.6, matSidG, matRoofD, 1);
+    house(8.3, -8.5, 7, 5.4, 3.3, matSidT, matRoofR, -1);    // E row
+    house(8.1, 1.5, 6.5, 5.8, 3.5, matSidB, matRoofD, -1);
+    house(8.4, 10.5, 7.5, 5.2, 3.2, matSidG, matRoofD, -1);
+
+    // water tower on the far W house (fog silhouette landmark)
+    (function () {
+      var tx = -8.2, tz = -12.5, base = 3.4 + 1.5;
+      [[-1.1, -1.1], [1.1, -1.1], [-1.1, 1.1], [1.1, 1.1]].forEach(function (p) {
+        scene.add(cs(boxMesh(matMetal, tx + p[0], base + 1.0, tz + p[1], 0.14, 2.0, 0.14, 2)));
+      });
+      scene.add(cs(prismMesh(matMetal, tx, tz, 1.3, 1.7, 8, 3, 1.4, null, base + 2.0)));
+      scene.add(cs(prismMesh(matRoofD, tx, tz, 1.45, 0.55, 8, 3, 0.5, null, base + 3.7)));
+    })();
+
+    // ---------------- street lamps -------------------------------------
+    LAMPS.forEach(function (p, i) {
+      var x = p[0], z = p[1];
+      scene.add(cs(prismMesh(matMetal, x, z, 0.09, 3.6, 6, 1.4, 4.5)));
+      scene.add(cs(boxMesh(matMetal, x, 3.72, z + (x > 0 ? 0.35 : -0.35), 0.5, 0.09, 0.09, 2)));  // arm
+      var hx = x + (x > 0 ? 0.62 : -0.62);
+      scene.add(cs(boxMesh(matMetal, hx, 3.66, z, 0.34, 0.16, 0.34, 2)));                          // head box
+      scene.add(boxMesh(matLampGlow, hx, 3.53, z, 0.24, 0.05, 0.24, 2, 0, [1.8, 1.45, 0.75]));    // glowing bottom
+      decals.oct(x, z, 1.9, PS1.decalMaterial(0.44, 0.31, 0.15, 0.44), 0.005, 40 + i);            // light pool tint on road
+      colliders.push({ x0: x - 0.16, z0: z - 0.16, x1: x + 0.16, z1: z + 0.16 });
+    });
+
+    // ---------------- fences, poles, small props ------------------------
+    function fence(x, z0, z1) {
+      for (var zz = z0; zz < z1; zz += 0.62) {
+        scene.add(cs(boxMesh(matDarkWood, x, 0.55, zz + 0.31, 0.07, 1.0, 0.07, 2)));
+      }
+      scene.add(boxMesh(matDarkWood, x, 0.82, (z0 + z1) / 2, 0.06, 0.09, z1 - z0, 1));
+      scene.add(boxMesh(matDarkWood, x, 0.45, (z0 + z1) / 2, 0.06, 0.09, z1 - z0, 1));
+    }
+    fence(-5.35, 1.2, 2.2); fence(-5.35, 9.2, 10.8);
+    fence(5.35, -6.2, -4.4); fence(5.35, 13.9, 15.4);
+
+    // power poles + sagging cables along the east side
+    [[5.9, -16], [5.9, -2], [5.9, 12]].forEach(function (p) {
+      scene.add(cs(prismMesh(matDarkWood, p[0], p[1], 0.12, 6.2, 6, 1.4, 8)));
+      scene.add(cs(boxMesh(matDarkWood, p[0], 5.9, p[1], 1.3, 0.09, 0.09, 2)));
+      scene.add(cs(boxMesh(matDarkWood, p[0], 5.5, p[1], 1.0, 0.08, 0.08, 2)));
+    });
+    for (var c = 0; c < 2; c++) {
+      var zs = c === 0 ? -16 : -2, ze = c === 0 ? -2 : 12;
+      for (var seg = 0; seg < 5; seg++) {
+        var z0c = zs + (ze - zs) * seg / 5, z1c = zs + (ze - zs) * (seg + 1) / 5;
+        var frac = (seg + 0.5) / 5;
+        var ymid = 5.9 - 0.45 * Math.sin(Math.PI * frac);
+        [-0.55, 0.55].forEach(function (xo) {
+          scene.add(boxMesh(matDarkWood, 5.9 + xo, ymid, (z0c + z1c) / 2, 0.04, 0.04, z1c - z0c + 0.02, 4, 0, [0.10, 0.11, 0.13]));
+        });
+      }
+    }
+
+    // parked car (east side, very PS1 sedan)
+    (function () {
+      var cx = 3.1, cz = 4.6;
+      var matCar = ps1Material(PS1.solidTexture(120, 34, 30));
+      scene.add(cs(boxMesh(matCar, cx, 0.55, cz, 1.7, 0.5, 4.0, 1)));
+      scene.add(cs(boxMesh(matCar, cx, 0.95, cz - 0.3, 1.5, 0.42, 2.0, 1)));
+      scene.add(boxMesh(matGlassDark, cx, 0.95, cz + 0.75, 1.3, 0.32, 0.05, 1));
+      [[-0.75, 1.35], [0.75, 1.35], [-0.75, -1.35], [0.75, -1.35]].forEach(function (w) {
+        scene.add(prismMesh(matMetal, cx + w[0], cz + w[1], 0.30, 0.30, 6, 1.5, 0.8, null, 0.0));
+      });
+      colliders.push({ x0: cx - 0.95, z0: cz - 2.1, x1: cx + 0.95, z1: cz + 2.1 });
+      decals.rect(cx, cz, 2.0, 4.3, PS1.blobMat, 0.005);
+    })();
+
+    // hydrant / mailbox / trash cans
+    (function () {
+      scene.add(cs(prismMesh(matHydrant, -3.9, 8.6, 0.14, 0.55, 6, 1.5, 0.8)));
+      scene.add(cs(boxMesh(matHydrant, -3.9, 0.60, 8.6, 0.30, 0.12, 0.30, 1.5)));
+      colliders.push({ x0: -4.1, z0: 8.4, x1: -3.7, z1: 8.8 });
+      // mailbox
+      scene.add(cs(prismMesh(matDarkWood, 4.6, 13.6, 0.06, 0.95, 4, 1, 1.2)));
+      scene.add(cs(boxMesh(matMetal, 4.6, 1.02, 13.6, 0.22, 0.20, 0.34, 1.5)));
+      // trash cans
+      scene.add(cs(prismMesh(matMetal, -4.78, 12.3, 0.30, 0.85, 8, 1.8, 0.9)));
+      scene.add(cs(prismMesh(matMetal, -4.78, 11.45, 0.30, 0.85, 8, 1.8, 0.9)));
+      scene.add(cs(boxMesh(matMetal, -4.78, 0.90, 11.9, 0.62, 0.06, 0.62, 1.5)));
+      colliders.push({ x0: -5.2, z0: 11.05, x1: -4.4, z1: 12.7 });
+    })();
+
+    // bare trees
+    function bareTree(x, z, s) {
+      scene.add(cs(prismMesh(matDarkWood, x, z, 0.16 * s, 2.4 * s, 6, 1.5, 3.5)));
+      scene.add(cs(boxMesh(matDarkWood, x, 2.4 * s, z, 1.1 * s, 0.09 * s, 0.09 * s, 3, 0.5)));
+      scene.add(cs(boxMesh(matDarkWood, x + 0.3 * s, 2.9 * s, z, 0.7 * s, 0.07 * s, 0.07 * s, 3, -0.45)));
+      colliders.push({ x0: x - 0.3, z0: z - 0.3, x1: x + 0.3, z1: z + 0.3 });
+    }
+    bareTree(-4.9, -16.5, 1.0); bareTree(4.9, -13.8, 0.85); bareTree(-4.9, 14.6, 1.1);
+
+
+    // ---------------- v6 detail pass ------------------------------------
+    // stop sign at the south crosswalk (octagon face toward the camera)
+    scene.add(cs(boxMesh(matMetal, 2.5, 1.1, 16.6, 0.07, 2.2, 0.07, 2)));
+    (function () {
+      var face = prismMesh(matHydrant, 0, 0, 0.30, 0.05, 8, 1.8, 0.2, null, 0);
+      face.rotation.x = Math.PI / 2;
+      face.position.set(2.5, 2.28, 16.6);
+      scene.add(face);
+    })();
+    colliders.push({ x0: 2.35, z0: 16.45, x1: 2.65, z1: 16.75 });
+    // park benches on the sidewalks
+    function bench(x, z) {
+      scene.add(boxMesh(matDarkWood, x, 0.42, z, 0.55, 0.06, 1.6, 1.4));
+      scene.add(boxMesh(matDarkWood, x, 0.20, z - 0.6, 0.42, 0.36, 0.10, 1.4));
+      scene.add(boxMesh(matDarkWood, x, 0.20, z + 0.6, 0.42, 0.36, 0.10, 1.4));
+      scene.add(boxMesh(matDarkWood, x, 0.66, z - 0.76, 0.50, 0.44, 0.06, 1.4));
+      colliders.push({ x0: x - 0.35, z0: z - 0.9, x1: x + 0.35, z1: z + 0.9 });
+    }
+    bench(-4.55, 4.6); bench(4.55, -10.6);
+    // hedges in the front yards
+    [[-5.7, -8.8], [-5.7, -7.3], [5.7, 6.6], [5.7, 8.0], [-5.7, 12.8]].forEach(function (h, i) {
+      scene.add(cs(PS1.blobMesh(matGrass, h[0], 0.34, h[1], 0.55, 0.72, 0.35, function () { return [0.85, 0.95, 0.85]; })));
+      void i;
+    });
+    // chimneys + a porch light over one door
+    scene.add(cs(boxMesh(matRoofD, -8.4, 4.75, -3.5, 0.6, 1.5, 0.6, 1.5)));
+    scene.add(cs(boxMesh(matRoofD, 8.4, 4.55, 10.5, 0.6, 1.4, 0.6, 1.5)));
+    scene.add(boxMesh(matLampGlow, -5.40, 2.30, -4.93, 0.05, 0.10, 0.14, 2, 0, [1.6, 1.25, 0.6]));
+    // bicycle leaning against the east fence
+    (function () {
+      var matBike = ps1Material(PS1.solidTexture(46, 92, 142));
+      var bx = 5.42, bz = -5.5;
+      [-0.52, 0.52].forEach(function (w) {
+        var wheel = prismMesh(matMetal, 0, 0, 0.30, 0.05, 8, 1.8, 0.3, null, 0);
+        wheel.rotation.y = Math.PI / 2;
+        wheel.position.set(bx + w * 0.55, 0.33, bz);
+        scene.add(wheel);
+      });
+      scene.add(boxMesh(matBike, bx, 0.60, bz, 1.0, 0.05, 0.05, 2, 0.16));
+      scene.add(boxMesh(matBike, bx, 0.46, bz, 0.05, 0.42, 0.05, 2));
+      scene.add(boxMesh(matBike, bx - 0.46, 0.68, bz, 0.05, 0.05, 0.34, 2));
+      scene.add(boxMesh(matDarkWood, bx + 0.44, 0.68, bz, 0.16, 0.05, 0.14, 2));
+    })();
+    // trash bags by the cans
+    var matBag = ps1Material(PS1.solidTexture(24, 24, 28));
+    scene.add(PS1.blobMesh(matBag, -4.70, 0.30, 13.15, 0.28, 0.95, 0.25, function () { return [1, 1, 1]; }));
+    scene.add(PS1.blobMesh(matBag, -4.50, 0.24, 13.55, 0.22, 1.0, 0.25, function () { return [0.9, 0.9, 0.95]; }));
+    // flower bed by the east house
+    scene.add(boxMesh(matDarkWood, 5.62, 0.16, 1.6, 0.95, 0.32, 2.2, 1.4));
+    [[5.35, 0.95], [5.62, 1.1], [5.9, 0.85], [5.4, 2.2], [5.85, 2.3]].forEach(function (f, i) {
+      var cols = [[212, 70, 70], [230, 180, 70], [200, 90, 190]];
+      var m = ps1Material(PS1.solidTexture(cols[i % 3][0], cols[i % 3][1], cols[i % 3][2]));
+      scene.add(PS1.blobMesh(m, f[0], 0.42, f[1], 0.09, 0.9, 0.25, function () { return [1.15, 1.05, 1.05]; }));
+    });
+    // bus stop sign
+    scene.add(cs(boxMesh(matMetal, 4.62, 1.2, -14.8, 0.06, 2.4, 0.06, 2)));
+    scene.add(boxMesh(matWindowCold, 4.60, 2.15, -14.8, 0.03, 0.42, 0.60, 2, 0, [0.5, 0.75, 1.1]));
+    // road markings + grime decals
+    var matWhite = PS1.decalMaterial(0.72, 0.72, 0.66, 0.6);
+    var matPuddle = PS1.decalMaterial(0.03, 0.035, 0.05, 0.55);
+    var matManh = PS1.decalMaterial(0.05, 0.05, 0.06, 0.5);
+    for (var s2 = 0; s2 < 6; s2++) decals.rect(-1.6 + s2 * 0.64, 16.4, 0.5, 2.6, matWhite, 0.008);  // crosswalk
+    decals.oct(0.4, 2.4, 0.5, matManh, 0.006, 60);
+    decals.oct(-1.8, -4.8, 0.9, matPuddle, 0.004, 61);
+    decals.oct(2.2, 10.2, 0.7, matPuddle, 0.004, 62);
+    decals.path([[0, 8], [0.7, 5.6], [1.3, 3.4]], 0.30, 0.2, PS1.decalMaterial(0.05, 0.045, 0.04, 0.4), 0.004); // tire track
+    scene.add(decals.blobGroup); scene.add(decals.decalGroup);
+
+    return {
+      name: '浓雾夜小镇',
+      scene: scene,
+      colliders: colliders,
+      bounds: { x0: -4.9, x1: 4.9, z0: -18.5, z1: 18.5 },
+      spawn: [1.4, 17.6, Math.atan2(-(0 - 1.4), -(-8 - 17.6)), 0.02],
+      idle: { pos: [1.4, 1.62, 17.6], target: [-0.4, 1.75, -8] },
+      fog: { color: [0.115, 0.145, 0.195], near: 5, far: 29 },
+      noFlicker: true,
+      blobGroup: decals.blobGroup,
+      particles: [],
+      update: function (t) {
+        var warm = 0.92 + 0.07 * Math.sin(t * 9.1) + 0.03 * Math.sin(t * 23.7);
+        matLampGlow.uniforms.uFlicker.value = warm;
+        matWindowWarm.uniforms.uFlicker.value = warm;
+        matWindowCold.uniforms.uFlicker.value = 0.4 + 0.6 * Math.abs(Math.sin(t * 5.3) * Math.sin(t * 0.7));
+      }
+    };
+  });
+})();
+
+;
+(function () {
+  'use strict';
+  // ======================= 中世纪黄昏集市广场 ==========================
+  var texFrom = PS1.texFrom, pixelLoop = PS1.pixelLoop, newCanvas = PS1.newCanvas;
+  var hash2 = PS1.hash2, vnoise = PS1.vnoise;
+  var boxMesh = PS1.boxMesh, prismMesh = PS1.prismMesh, quadMesh = PS1.quadMesh;
+  var quadCorners = PS1.quadCorners, blobMesh = PS1.blobMesh;
+  var cs = PS1.cs, setRelight = PS1.setRelight;
+  var ps1Material = PS1.ps1Material;
+
+  // ------------------------- textures ---------------------------------
+  function cobbleCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var gx = Math.floor(x / 16), gy = Math.floor(y / 16);
+      var ox = (gy & 1) * 8;
+      var lx = (x + ox) % 16, ly = y % 16;
+      var cx = (x + ox - 8) % 16, cy = ly - 8;
+      var d = Math.sqrt(cx * cx + cy * cy);
+      var id = hash2(gx * 3 + Math.floor((x + ox) / 16), gy);
+      var base = 108 + id * 34;
+      var r = base, g = base * 0.99, b = base * 0.94;
+      var n = vnoise(x / 7, y / 7, 9, 2);
+      r *= 0.86 + n * 0.28; g *= 0.86 + n * 0.28; b *= 0.86 + n * 0.28;
+      if (d > 7.2) { r = 58 + id * 14; g = 55 + id * 13; b = 52 + id * 12; }   // mortar
+      if (d > 6.4 && d <= 7.2) { r *= 0.7; g *= 0.7; b *= 0.7; }
+      var sp = hash2(x + 31, y + 7);
+      if (sp < 0.06) { r *= 0.75; g *= 0.75; b *= 0.75; }
+      return [r, g, b];
+    });
+  }
+  function plasterCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 9, y / 9, 7, 3);
+      var r = 196 + n * 26, g = 178 + n * 24, b = 148 + n * 20;
+      var stain = vnoise(x / 16 + 4, y / 30, 4, 2);
+      if (stain > 0.66) { var k = (stain - 0.66) * 1.6; r *= 1 - k * 0.45; g *= 1 - k * 0.45; b *= 1 - k * 0.42; }
+      var sp = hash2(x + 2, y + 51);
+      if (sp < 0.05) { r *= 0.85; g *= 0.85; b *= 0.85; }
+      return [r, g, b];
+    });
+  }
+  function beamCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var grain = vnoise(x / 4, y / 26, 8, 2);
+      var r = 66 * (0.85 + grain * 0.3), g = 48 * (0.85 + grain * 0.3), b = 34 * (0.85 + grain * 0.3);
+      if (x % 19 < 1) { r *= 0.6; g *= 0.6; b *= 0.6; }
+      var sp = hash2(x + 9, y + 4);
+      if (sp < 0.08) { r *= 0.8; g *= 0.8; b *= 0.8; }
+      return [r, g, b];
+    });
+  }
+  function stripeCanvas(cr, cg, cb) {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var stripe = Math.floor(x / 11) % 2 === 0;
+      var r = stripe ? cr : 236, g = stripe ? cg : 228, b = stripe ? cb : 218;
+      var n = vnoise(x / 12, y / 12, 5, 2);
+      r *= 0.92 + n * 0.16; g *= 0.92 + n * 0.16; b *= 0.92 + n * 0.16;
+      if (y < 2) { r *= 0.5; g *= 0.5; b *= 0.5; }
+      var sp = hash2(x, y + 13);
+      if (sp < 0.05) { r *= 0.82; g *= 0.82; b *= 0.82; }
+      return [r, g, b];
+    });
+  }
+  function stoneCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 6, y / 6, 8, 2);
+      var r = 118 * (0.88 + n * 0.24), g = 114 * (0.88 + n * 0.24), b = 106 * (0.88 + n * 0.24);
+      var sp = hash2(x + 21, y + 8);
+      if (sp < 0.09) { r *= 0.84; g *= 0.84; b *= 0.84; }
+      var moss = vnoise(x / 18, y / 18, 3, 2);
+      if (moss > 0.70) { var k = (moss - 0.70) * 2; r *= 1 - k * 0.45; g *= 1 - k * 0.1; b *= 1 - k * 0.45; }
+      return [r, g, b];
+    });
+  }
+  function waterCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var r = 38, g = 80, b = 84;
+      var w1 = Math.sin((x + Math.sin(y * 0.35) * 5) * 0.4);
+      var w2 = Math.sin((y + Math.sin(x * 0.3) * 6) * 0.3 + 1.4);
+      var k = 0.82 + 0.18 * w1 + 0.16 * w2;
+      r *= k; g *= k; b *= k;
+      if (w1 > 0.9 && w2 > 0.5) { r += 115; g += 128; b += 120; }
+      return [r, g, b];
+    });
+  }
+  function sackCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 5, y / 5, 8, 2);
+      var r = 148 * (0.85 + n * 0.3), g = 120 * (0.85 + n * 0.3), b = 84 * (0.85 + n * 0.3);
+      if ((x + y * 2) % 13 < 1) { r *= 0.8; g *= 0.8; b *= 0.8; }   // weave
+      return [r, g, b];
+    });
+  }
+  function shingleCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var col = Math.floor(x / 9), cx = x - col * 9;
+      var row = Math.floor(y / 13), ry = y - row * 13;
+      var tint = (hash2(col * 2, row * 3) * 2 - 1) * 10;
+      var r = 88 + tint, g = 60 + tint, b = 44 + tint;
+      if (ry < 1 || cx < 1) { r *= 0.45; g *= 0.45; b *= 0.45; }
+      if (ry === 1) { r *= 1.35; g *= 1.3; b *= 1.25; }
+      var moss = vnoise(x / 15, y / 15, 4, 2);
+      if (moss > 0.74) { var k = (moss - 0.74) * 2; r *= 1 - k * 0.4; g *= 1 - k * 0.05; b *= 1 - k * 0.35; }
+      return [r, g, b];
+    });
+  }
+  function bannerCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var r = 148, g = 26, b = 26;
+      if (y > 22 && y < 34) { r = 210; g = 168; b = 40; }              // heraldic band
+      if (y > 25 && y < 31 && x > 24 && x < 40) { r = 148; g = 26; b = 26; }   // simple emblem block
+      var n = vnoise(x / 10, y / 10, 5, 2);
+      r *= 0.9 + n * 0.2; g *= 0.9 + n * 0.2; b *= 0.9 + n * 0.2;
+      if (y < 2) { r *= 0.4; g *= 0.4; b *= 0.4; }
+      if (y > 60) { var k2 = (y - 60) / 4; r *= 1 - k2; g *= 1 - k2; b *= 1 - k2; }  // swallow-tail fade
+      return [r, g, b];
+    });
+  }
+
+  var cobbleTex = texFrom(cobbleCanvas());
+  var plasterTex = texFrom(plasterCanvas());
+  var beamTex = texFrom(beamCanvas());
+  var awnRedTex = texFrom(stripeCanvas(205, 52, 44));
+  var awnGreenTex = texFrom(stripeCanvas(72, 132, 80));
+  var stoneTex = texFrom(stoneCanvas());
+  var waterTex = texFrom(waterCanvas());
+  var sackTex = texFrom(sackCanvas());
+  var shingleTex = texFrom(shingleCanvas());
+  var bannerTex = texFrom(bannerCanvas());
+
+  var matCobble = ps1Material(cobbleTex);
+  var matPlaster = ps1Material(plasterTex);
+  var matBeam = ps1Material(beamTex);
+  var matAwnRed = ps1Material(awnRedTex);
+  var matAwnGreen = ps1Material(awnGreenTex);
+  var matStone = ps1Material(stoneTex);
+  var matWater = ps1Material(waterTex);
+  var matSack = ps1Material(sackTex);
+  var matShingle = ps1Material(shingleTex);
+  var matBanner = ps1Material(bannerTex);
+  var matBread = ps1Material(PS1.solidTexture(196, 148, 82));
+  var matFruitR = ps1Material(PS1.solidTexture(188, 60, 44));
+  var matFruitG = ps1Material(PS1.solidTexture(160, 160, 54));
+  var matPot = ps1Material(PS1.solidTexture(150, 96, 62));
+  var matClothB = ps1Material(PS1.solidTexture(70, 90, 140));
+  var matClothY = ps1Material(PS1.solidTexture(190, 160, 70));
+  var matPigeon = ps1Material(PS1.solidTexture(120, 118, 126));
+  var matHay = ps1Material(PS1.solidTexture(200, 170, 80));
+
+  // ------------------------- lighting ---------------------------------
+  var SUN = new THREE.Vector3(0.62, 0.52, 0.28).normalize();   // higher sun: shorter shadows, brighter square
+  var SUN_COL = [1.26, 1.00, 0.70];
+  var SKY_AMB = [0.38, 0.35, 0.38];
+  var GND_AMB = [0.28, 0.22, 0.18];
+  var marketRelight = function (x, y, z, nx, ny, nz) {
+    var ndl = Math.max(0, nx * SUN.x + ny * SUN.y + nz * SUN.z);
+    var hemi = 0.5 + 0.5 * ny;
+    var r = SUN_COL[0] * ndl * 1.02 + GND_AMB[0] + (SKY_AMB[0] - GND_AMB[0]) * hemi;
+    var g = SUN_COL[1] * ndl * 1.02 + GND_AMB[1] + (SKY_AMB[1] - GND_AMB[1]) * hemi;
+    var b = SUN_COL[2] * ndl * 1.02 + GND_AMB[2] + (SKY_AMB[2] - GND_AMB[2]) * hemi;
+    return [Math.min(1.2, r), Math.min(1.16, g), Math.min(1.12, b)];
+  };
+
+  PS1.registerScene(function () {
+    setRelight(marketRelight);
+    var scene = new THREE.Scene();
+    var decals = PS1.newDecalSet();
+    var colliders = [];
+
+    var sun = new THREE.DirectionalLight(0xffddaa, 1);
+    sun.position.copy(SUN).multiplyScalar(32);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.camera.near = 2; sun.shadow.camera.far = 75;
+    sun.shadow.camera.left = -21; sun.shadow.camera.right = 21;
+    sun.shadow.camera.top = 21; sun.shadow.camera.bottom = -21;
+    sun.shadow.bias = -0.004; sun.shadow.normalBias = 0.05;
+    scene.add(sun); scene.add(sun.target);
+
+    scene.add(PS1.makeSky({
+      top: [0.24, 0.29, 0.50], horizon: [0.99, 0.61, 0.28], bottom: [0.16, 0.11, 0.10],
+      sunDir: SUN.toArray(), sunCol: [1.3, 0.95, 0.55], sunCut: 0.9978, sunGlow: 0.45,
+      radius: 90
+    }));
+
+    // square ground
+    scene.add(PS1.groundGrid(matCobble, 0, 0, 34, 34, 11, 1, 0, 1));
+
+    // ---------------- central fountain ---------------------------------
+    scene.add(cs(prismMesh(matStone, 0, 0, 2.3, 0.62, 8, 4, 0.8)));
+    scene.add(prismMesh(matStone, 0, 0, 2.05, 0.10, 8, 4, 0.4, null, 0.08));   // inner lip
+    scene.add(PS1.groundGrid(matWater, 0, 0, 2.9, 2.9, 2, 0.6, 0.68, 1));   // brimming: 6cm above the solid basin top (was buried inside it)
+    scene.add(cs(prismMesh(matStone, 0, 0, 0.26, 1.25, 8, 1.5, 1.6, null, 0.5)));
+    scene.add(cs(prismMesh(matStone, 0, 0, 0.95, 0.30, 8, 2.4, 0.5, null, 1.6)));
+    scene.add(cs(prismMesh(matWater, 0, 0, 0.16, 0.85, 8, 1.2, 1.4, null, 0.72))); // falling sheet
+    scene.add(cs(prismMesh(matStone, 0, 0, 0.16, 0.30, 6, 1, 0.5, null, 1.9)));
+    colliders.push({ x0: -2.4, z0: -2.4, x1: 2.4, z1: 2.4 });
+    decals.oct(0, 0, 2.9, PS1.decalMaterial(0.16, 0.14, 0.11, 0.4), 0.006, 70);  // wet ring
+
+    // ---------------- market stalls ------------------------------------
+    var banners = [];
+    function stall(x, z, rot, awn, goods) {
+      var g = new THREE.Group();
+      // 4 posts + counter + back panel
+      [[-1.1, -0.7], [1.1, -0.7], [-1.1, 0.7], [1.1, 0.7]].forEach(function (p) {
+        g.add(cs(boxMesh(matBeam, x + p[0], 1.15, z + p[1], 0.12, 2.3, 0.12, 2)));
+      });
+      g.add(cs(boxMesh(matBeam, x, 0.88, z, 2.5, 0.09, 1.55, 1.2)));
+      g.add(cs(boxMesh(matBeam, x, 1.35, z - 0.72, 2.4, 1.0, 0.08, 1.2)));
+      // sloped striped awning (high at back, low at front)
+      g.add(cs(quadCorners(awn,
+        [x - 1.45, 2.35, z - 0.85], [x + 1.45, 2.35, z - 0.85],
+        [x + 1.45, 2.05, z + 1.05], [x - 1.45, 2.05, z + 1.05], 1.8, 2)));
+      goods(g, x, z);
+      scene.add(g);
+      colliders.push({ x0: x - 1.35, z0: z - 0.9, x1: x + 1.35, z1: z + 0.9 });
+      decals.rect(x, z, 2.9, 2.1, PS1.blobMat, 0.012);
+    }
+    // bread stall (W)
+    stall(-5.6, -1.2, 0, matAwnRed, function (g, x, z) {
+      for (var i = 0; i < 5; i++) {
+        g.add(blobMesh(matBread, x - 0.9 + i * 0.45, 1.02, z + 0.1 + (i % 2) * 0.3, 0.16, 0.7, 0.3, function () { return [1, 0.86, 0.6]; }));
+      }
+    });
+    // fruit stall (E)
+    stall(5.6, -1.4, 0, matAwnGreen, function (g, x, z) {
+      g.add(boxMesh(matBeam, x - 0.6, 1.0, z, 0.7, 0.16, 0.6, 1.5));
+      g.add(boxMesh(matBeam, x + 0.6, 1.0, z, 0.7, 0.16, 0.6, 1.5));
+      for (var i = 0; i < 7; i++) {
+        var m = i % 2 ? matFruitR : matFruitG;
+        g.add(blobMesh(m, x - 0.85 + i * 0.28, 1.12, z + (i % 3) * 0.16 - 0.16, 0.10, 0.9, 0.25, function () { return [1, 1, 1]; }));
+      }
+    });
+    // pottery stall (NW)
+    stall(-4.6, 5.8, 0, matAwnGreen, function (g, x, z) {
+      for (var i = 0; i < 4; i++) {
+        g.add(prismMesh(matPot, x - 0.75 + i * 0.5, z - 0.1 + (i % 2) * 0.4, 0.14, 0.24 + (i % 2) * 0.08, 7, 1.6, 0.8, null, 0.93));
+      }
+    });
+    // fabric stall (SE)
+    stall(4.8, 5.6, 0, matAwnRed, function (g, x, z) {
+      g.add(boxMesh(matBeam, x, 1.02, z, 2.1, 0.12, 0.7, 1.5));
+      [[-0.7, matClothB], [0, matClothY], [0.7, matClothB]].forEach(function (r, i) {
+        var roll = prismMesh(r[1], 0, 0, 0.11, 0.95, 6, 1.2, 0.6, null, 0);  // geometry at origin
+        roll.position.set(x + r[0], 1.16, z);
+        roll.rotation.z = Math.PI / 2;
+        roll.rotation.y = i * 0.12;
+        g.add(roll);
+      });
+    });
+
+    // ---------------- half-timber houses -------------------------------
+    // Built directly in world coords for a given facing (no group rotation:
+    // vertex-light baking bakes world positions into geometry).
+    var matGlass = ps1Material(PS1.solidTexture(26, 28, 36));
+    function timberHouse(cx, cz, w, d, front) {
+      // front: '+z' | '-z' | '+x' | '-x'; w along side axis, d along front axis
+      var F = front === '+z' ? [0, 1] : front === '-z' ? [0, -1] : front === '+x' ? [1, 0] : [-1, 0];
+      var S = [F[1], -F[0]];
+      var alongX = F[0] !== 0;                    // front runs along x?
+      function P(lx, lz) { return [cx + S[0] * lx + F[0] * lz, cz + S[1] * lx + F[1] * lz]; }
+      function PW(lx, lz, y) { var p = P(lx, lz); return [p[0], y, p[1]]; }
+      function obox(mat, lx, y, lz, lw, lh, ld, uvScale, rotZ, emissive) {
+        var p = P(lx, lz);
+        return boxMesh(mat, p[0], y, p[1], alongX ? ld : lw, lh, alongX ? lw : ld, uvScale, rotZ, emissive);
+      }
+      var H1 = 2.6, H2 = 2.5;
+      scene.add(cs(obox(matPlaster, 0, H1 / 2, 0, w, H1, d, 1)));
+      scene.add(cs(obox(matPlaster, 0, H1 + H2 / 2, 0.35, w + 0.6, H2, d + 0.5, 1)));   // jettied upper floor
+      // corner posts
+      [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function (s) {
+        scene.add(obox(matBeam, s[0] * w / 2, H1 / 2, s[1] * d / 2, 0.16, H1, 0.16, 2));
+        scene.add(obox(matBeam, s[0] * (w / 2 + 0.3), H1 + H2 / 2, 0.35 + s[1] * (d / 2 + 0.25), 0.16, H2, 0.16, 2));
+      });
+      // floor bands on the front face
+      scene.add(obox(matBeam, 0, H1 - 0.08, d / 2, w, 0.16, 0.10, 2));
+      scene.add(obox(matBeam, 0, H1 + H2 - 0.08, 0.35 + (d + 0.5) / 2, w + 0.6, 0.16, 0.10, 2));
+      // diagonal braces (z-facing houses only; rotZ is a z-axis rotation)
+      if (!alongX) {
+        scene.add(obox(matBeam, -w * 0.22, H1 / 2, d / 2, 0.12, H1 * 1.1, 0.08, 2, 0.5));
+        scene.add(obox(matBeam, w * 0.22, H1 / 2, d / 2, 0.12, H1 * 1.1, 0.08, 2, -0.5));
+      }
+      // door + windows
+      scene.add(obox(matBeam, -w * 0.22, 1.05, d / 2 + 0.02, 0.9, 2.0, 0.1, 2));
+      scene.add(obox(matGlass, w * 0.18, 1.7, d / 2 + 0.06, 0.62, 0.66, 0.06, 2));
+      scene.add(obox(matBeam, w * 0.18, 1.7, d / 2 + 0.11, 0.7, 0.74, 0.03, 2));
+      scene.add(obox(matGlass, -0.5, H1 + 1.2, 0.35 + (d + 0.5) / 2 + 0.06, 0.62, 0.7, 0.06, 2));
+      scene.add(obox(matGlass, 0.5, H1 + 1.2, 0.35 + (d + 0.5) / 2 + 0.06, 0.62, 0.7, 0.06, 2));
+      // steep gable roof, ridge along the side axis
+      var rh = 2.1, eaveY = H1 + H2 + 0.05, ridgeY = H1 + H2 + rh;
+      var eaveF = 0.35 + (d + 0.5) / 2 + 0.35, eaveB = -(d + 0.5) / 2 - 0.35, ridgeZ = 0.35;
+      scene.add(cs(quadCorners(matShingle,
+        PW(-w / 2 - 0.75, eaveF, eaveY), PW(w / 2 + 0.75, eaveF, eaveY),
+        PW(w / 2 + 0.35, ridgeZ, ridgeY), PW(-w / 2 - 0.35, ridgeZ, ridgeY), d * 0.6, w * 0.7)));
+      scene.add(cs(quadCorners(matShingle,
+        PW(-w / 2 - 0.75, eaveB, eaveY), PW(w / 2 + 0.75, eaveB, eaveY),
+        PW(w / 2 + 0.35, ridgeZ, ridgeY), PW(-w / 2 - 0.35, ridgeZ, ridgeY), d * 0.6, w * 0.7)));
+      // chimney
+      scene.add(cs(obox(matStone, w * 0.22, H1 + H2 + 1.7, 0, 0.5, 2.4, 0.5, 1.4)));
+      // collider
+      var fw = alongX ? d : w, fd = alongX ? w : d;
+      colliders.push({ x0: cx - fw / 2 - 0.6, z0: cz - fd / 2 - 0.6, x1: cx + fw / 2 + 0.6, z1: cz + fd / 2 + 0.6 });
+    }
+
+    timberHouse(-4.5, -13.8, 7.5, 5.6, '+z');   // N-W
+    timberHouse(5.5, -14.2, 7.0, 5.4, '+z');    // N-E
+    timberHouse(-16.2, -4.5, 5.6, 6.6, '+x');   // W
+    timberHouse(16.2, 4.0, 5.6, 6.6, '-x');     // E
+    timberHouse(-8.6, 14.2, 6.4, 5.2, '-z');    // S-W (entrance gap at x 0)
+    timberHouse(8.6, 14.2, 6.4, 5.2, '-z');     // S-E
+
+    // ---------------- cart + barrels + sacks + hay ----------------------
+    (function () {
+      var cx = 6.0, cz = 3.0;
+      scene.add(cs(boxMesh(matBeam, cx, 0.75, cz, 1.5, 0.14, 2.6, 1.5)));
+      scene.add(cs(boxMesh(matBeam, cx, 0.95, cz - 1.25, 1.5, 0.4, 0.1, 1.5)));
+      scene.add(cs(boxMesh(matBeam, cx, 0.95, cz + 1.25, 1.5, 0.4, 0.1, 1.5)));
+      scene.add(boxMesh(matBeam, cx - 0.75, 0.72, cz + 1.9, 0.1, 0.1, 1.3, 2));
+      [[-0.8, 0.0], [0.8, 0.0]].forEach(function (w) {
+        var wheel = prismMesh(matBeam, 0, 0, 0.55, 0.12, 8, 2.4, 0.5, null, 0);  // geometry at origin
+        wheel.position.set(cx + w[0], 0.55, cz);
+        wheel.rotation.z = Math.PI / 2;
+        scene.add(cs(wheel));
+      });
+      colliders.push({ x0: cx - 1.0, z0: cz - 1.5, x1: cx + 1.0, z1: cz + 2.3 });
+    })();
+    function barrel(x, z) {
+      scene.add(cs(prismMesh(matBeam, x, z, 0.34, 0.9, 8, 2, 1)));
+      scene.add(prismMesh(matBeam, x, z, 0.37, 0.08, 8, 2, 0.2, null, 0.18));
+      scene.add(prismMesh(matBeam, x, z, 0.37, 0.08, 8, 2, 0.2, null, 0.64));
+      colliders.push({ x0: x - 0.4, z0: z - 0.4, x1: x + 0.4, z1: z + 0.4 });
+    }
+    barrel(-7.4, -6.8); barrel(-6.6, -7.5); barrel(-7.2, 9.8); barrel(9.4, 8.6); barrel(10.1, 8.0);
+    // sacks
+    [[-6.2, -7.0], [5.9, -2.6], [6.5, -3.1]].forEach(function (p) {
+      scene.add(blobMesh(matSack, p[0], 0.30, p[1], 0.34, 1.0, 0.25, function () { return [1, 0.96, 0.86]; }));
+    });
+    // hay pile by the cart
+    scene.add(blobMesh(matHay, 10.4, 0.55, -9.0, 0.95, 0.65, 0.45, function (sd) { return sd > 0.5 ? [1, 0.9, 0.55] : [0.95, 0.82, 0.5]; }));
+
+    // ---------------- banner poles at the south entrance ----------------
+    function bannerPole(x, z) {
+      scene.add(cs(prismMesh(matBeam, x, z, 0.08, 3.6, 6, 1, 4)));
+      scene.add(cs(boxMesh(matBeam, x, 3.55, z, 0.75, 0.08, 0.08, 2)));
+      var pivot = new THREE.Group();
+      pivot.position.set(x + 0.35, 3.5, z);
+      var b = cs(quadCorners(matBanner, [0, 0, -0.35], [0, 0, 0.35], [0, -1.5, 0.35], [0, -1.5, -0.35], 1, 2.2));
+      pivot.add(b);
+      scene.add(pivot);
+      banners.push(pivot);
+      colliders.push({ x0: x - 0.15, z0: z - 0.15, x1: x + 0.15, z1: z + 0.15 });
+    }
+    bannerPole(-2.6, 11.6); bannerPole(2.6, 11.6);
+
+    // bunting line between the poles
+    (function () {
+      var cols = [matAwnRed, matAwnGreen, matClothY];
+      for (var i = 0; i < 14; i++) {
+        var t = i / 13;
+        var x = -2.6 + t * 5.2;
+        var y = 3.5 - Math.sin(Math.PI * t) * 0.55;
+        var tri = quadCorners(cols[i % 3], [x - 0.09, y, 0], [x + 0.09, y, 0], [x + 0.02, y - 0.26, 0], [x - 0.02, y - 0.26, 0], 0.5, 0.8);
+        tri.position.z = 11.6;
+        scene.add(tri);
+      }
+    })();
+
+    // ---------------- pigeons -------------------------------------------
+    var pigeons = [];
+    [[3.2, 2.6], [-2.8, 3.1], [1.2, -3.0], [6.4, 2.2]].forEach(function (p, i) {
+      var g = new THREE.Group();
+      g.add(blobMesh(matPigeon, p[0], 0.16, p[1], 0.10, 0.85, 0.2, function () { return [1, 1, 1]; }));
+      g.add(boxMesh(matPigeon, p[0], 0.20, p[1], 0.10, 0.07, 0.10, 2));
+      g.userData = { ph: i * 1.7 };
+      scene.add(g); pigeons.push(g);
+    });
+
+
+    // ---------------- v6 detail pass ------------------------------------
+    // crate stacks beside the stalls
+    var matIron = ps1Material(PS1.solidTexture(54, 56, 62));
+    function crates(x, z, n) {
+      for (var i = 0; i < n; i++) {
+        var cx2 = x + (hash2(i, Math.round(x * 10)) - 0.5) * 0.26;
+        var cz2 = z + (hash2(i, Math.round(z * 10)) - 0.5) * 0.26;
+        scene.add(cs(boxMesh(matBeam, cx2, 0.26 + Math.floor(i / 2) * 0.52, cz2, 0.52, 0.50, 0.52, 1.2, hash2(i, 5) * 0.3 - 0.15)));
+      }
+      colliders.push({ x0: x - 0.5, z0: z - 0.5, x1: x + 0.5, z1: z + 0.5 });
+    }
+    crates(-7.5, 2.7, 3); crates(9.3, -5.1, 4); crates(-2.7, 9.1, 3);
+    // woven baskets with produce
+    [[4.9, -0.4], [5.5, -0.1], [-5.9, 4.7], [6.2, 7.5]].forEach(function (b, i) {
+      scene.add(prismMesh(matSack, b[0], b[1], 0.26, 0.20, 7, 1.6, 0.5, null, 0));
+      if (i < 2) scene.add(PS1.blobMesh(matFruitR, b[0], 0.30, b[1], 0.14, 0.8, 0.3, function () { return [1.1, 1.0, 0.9]; }));
+    });
+    // second bunting line between the pottery and fabric stalls
+    (function () {
+      var cols2 = [matAwnGreen, matClothY, matAwnRed];
+      for (var i = 0; i < 12; i++) {
+        var t = i / 11;
+        var x = -3.5 + t * 9.4;
+        var y = 2.28 - Math.sin(Math.PI * t) * 0.42;
+        var tri = quadCorners(cols2[i % 3], [x - 0.09, y, 0], [x + 0.09, y, 0], [x + 0.02, y - 0.26, 0], [x - 0.02, y - 0.26, 0], 0.5, 0.8);
+        tri.position.z = 6.55;
+        scene.add(tri);
+      }
+    })();
+    // well pump + bucket by the cart
+    scene.add(cs(boxMesh(matStone, 10.8, 0.18, -6.4, 0.72, 0.36, 0.72, 1.2)));
+    scene.add(cs(boxMesh(matIron, 10.8, 0.55, -6.4, 0.12, 0.5, 0.12, 2)));
+    scene.add(boxMesh(matIron, 10.8, 0.74, -6.26, 0.30, 0.07, 0.12, 2));
+    scene.add(boxMesh(matIron, 10.8, 0.95, -6.4, 0.11, 0.26, 0.06, 2));
+    scene.add(prismMesh(matBeam, 10.35, -6.1, 0.14, 0.22, 7, 1.4, 0.4, null, 0));
+    colliders.push({ x0: 10.35, z0: -6.85, x1: 11.25, z1: -5.95 });
+    // firewood stack behind the fabric stall
+    for (var w3 = 0; w3 < 6; w3++) {
+      var log = prismMesh(matBeam, 0, 0, 0.09, 0.85, 5, 0.7, 1.8, null, 0);
+      log.rotation.z = Math.PI / 2;
+      log.position.set(3.5, 0.10 + Math.floor(w3 / 3) * 0.19, 7.35 + (w3 % 3) * 0.21);
+      scene.add(log);
+    }
+    // extra grain sacks
+    [[-6.4, 7.0], [6.5, 8.7], [-3.3, -6.1]].forEach(function (p) {
+      scene.add(blobMesh(matSack, p[0], 0.30, p[1], 0.34, 1.0, 0.25, function () { return [1, 0.96, 0.86]; }));
+    });
+    // chickens pecking by the grain sacks
+    var chickens = [];
+    var matHen = ps1Material(PS1.solidTexture(235, 232, 225));
+    var matComb = ps1Material(PS1.solidTexture(202, 44, 40));
+    [[6.9, 6.5], [7.6, 7.0]].forEach(function (c, i) {
+      var g = new THREE.Group();
+      g.add(blobMesh(matHen, c[0], 0.13, c[1], 0.10, 0.85, 0.2, function () { return [1, 1, 1]; }));
+      g.add(boxMesh(matHen, c[0], 0.20, c[1] - 0.09, 0.08, 0.08, 0.10, 2));
+      g.add(boxMesh(matComb, c[0], 0.26, c[1] - 0.09, 0.04, 0.04, 0.06, 2));
+      g.userData = { ph: 2.6 + i * 1.3 };
+      scene.add(g); chickens.push(g);
+    });
+    // lantern string sagging between the north houses
+    (function () {
+      var ax = -2.6, az = 11.6, bx2 = 2.6, bz2 = 11.6, y0 = 3.15, sag = 0.42;
+      for (var sg = 0; sg < 6; sg++) {
+        var t0 = sg / 6, t1 = (sg + 1) / 6;
+        var x0 = ax + (bx2 - ax) * t0, x1 = ax + (bx2 - ax) * t1;
+        var z0 = az + (bz2 - az) * t0, z1 = az + (bz2 - az) * t1;
+        var ym = y0 - sag * Math.sin(Math.PI * (t0 + t1) / 2);
+        scene.add(boxMesh(matBeam, (x0 + x1) / 2, ym, (z0 + z1) / 2, Math.hypot(x1 - x0, z1 - z0) + 0.04, 0.04, 0.04, 3, 0, [0.3, 0.22, 0.14]));
+      }
+      var matLantern2 = ps1Material(PS1.solidTexture(255, 200, 110));
+      [0.22, 0.5, 0.78].forEach(function (t) {
+        var lx = ax + (bx2 - ax) * t, lz = az + (bz2 - az) * t;
+        var ly = y0 - sag * Math.sin(Math.PI * t) - 0.14;
+        scene.add(boxMesh(matLantern2, lx, ly, lz, 0.15, 0.20, 0.15, 2, 0, [1.5, 1.05, 0.5]));
+      });
+    })();
+    // smith corner: stump + anvil by the NE house
+    scene.add(prismMesh(matBeam, 7.3, -11.3, 0.26, 0.42, 7, 1.4, 0.6, null, 0));
+    scene.add(cs(boxMesh(matIron, 7.3, 0.62, -11.3, 0.55, 0.14, 0.26, 1.6)));
+    scene.add(boxMesh(matIron, 7.3, 0.72, -11.46, 0.32, 0.10, 0.14, 2));
+    colliders.push({ x0: 6.9, z0: -11.7, x1: 7.7, z1: -10.9 });
+    // two more pigeons
+    [[-3.5, -1.6], [4.5, 3.5]].forEach(function (p) {
+      var g = new THREE.Group();
+      g.add(blobMesh(matPigeon, p[0], 0.16, p[1], 0.10, 0.85, 0.2, function () { return [1, 1, 1]; }));
+      g.add(boxMesh(matPigeon, p[0], 0.20, p[1], 0.10, 0.07, 0.10, 2));
+      g.userData = { ph: 3.9 + p[0] };
+      scene.add(g); pigeons.push(g);
+    });
+    // grime: mud + straw
+    var matMud = PS1.decalMaterial(0.10, 0.08, 0.06, 0.42);
+    var matStraw = PS1.decalMaterial(0.30, 0.24, 0.10, 0.3);
+    decals.oct(6.0, 3.0, 1.6, matStraw, 0.005, 80);
+    decals.oct(-6.9, -7.1, 1.1, matStraw, 0.005, 81);
+    decals.path([[0, 4.5], [0.4, 7.5], [-0.3, 10.5]], 0.5, 0.7, matMud, 0.004);   // trodden path to entrance
+    decals.oct(9.6, 7.6, 1.2, matMud, 0.004, 82);
+    scene.add(decals.blobGroup); scene.add(decals.decalGroup);
+
+    // golden dust motes + chimney smoke
+    var dust = PS1.makeParticles({
+      mode: 'dust', count: 150, color: [1.0, 0.86, 0.62],
+      size: 0.02, speed: 1, sway: 0.5,
+      area: [-12, 12, -12, 12, 3.6]
+    });
+    var smoke = PS1.makeParticles({
+      mode: 'steam', count: 60, color: [0.46, 0.44, 0.44],
+      size: 0.055, speed: 0.55, sway: 0.3,
+      area: [6.5, 7.6, -14.8, -13.6, 3.4]
+    });
+    scene.add(dust); scene.add(smoke);
+
+    return {
+      name: '中世纪黄昏集市',
+      scene: scene,
+      colliders: colliders,
+      bounds: { x0: -11.6, x1: 11.6, z0: -10.8, z1: 13.4 },
+      spawn: [-1.6, 13.0, Math.atan2(-(1.2 - -1.6), -(-3.5 - 13.0)), 0.0],
+      idle: { pos: [-1.6, 1.62, 13.4], target: [1.2, 1.6, -3.5] },
+      fog: { color: [0.58, 0.44, 0.33], near: 28, far: 66 },
+      noFlicker: true,
+      blobGroup: decals.blobGroup,
+      particles: [dust, smoke],
+      update: function (t) {
+        waterTex.offset.x = t * 0.03;
+        waterTex.offset.y = -t * 0.05;
+        banners.forEach(function (b, i) {
+          b.rotation.z = 0.05 * Math.sin(t * 1.3 + i * 0.8);
+        });
+        pigeons.forEach(function (p) {
+          var ph = p.userData.ph;
+          p.position.y = Math.max(0, Math.sin(t * 2.2 + ph)) * 0.05;
+          p.rotation.x = Math.max(0, Math.sin(t * 1.1 + ph * 2)) * 0.5;   // pecking
+        });
+        chickens.forEach(function (c) {
+          var ph = c.userData.ph;
+          c.position.y = Math.max(0, Math.sin(t * 3.1 + ph)) * 0.04;
+          c.rotation.x = Math.max(0, Math.sin(t * 1.7 + ph * 2)) * 0.6;   // pecking
+        });
+      }
+    };
+  });
+})();
+
+;
+(function () {
+  'use strict';
+  // ======================= 赛博朋克雨夜小巷 ============================
+  var texFrom = PS1.texFrom, pixelLoop = PS1.pixelLoop, newCanvas = PS1.newCanvas;
+  var hash2 = PS1.hash2, vnoise = PS1.vnoise;
+  var boxMesh = PS1.boxMesh, prismMesh = PS1.prismMesh, quadMesh = PS1.quadMesh;
+  var quadCorners = PS1.quadCorners;
+  var cs = PS1.cs, setRelight = PS1.setRelight;
+  var ps1Material = PS1.ps1Material;
+
+  // ------------------------- textures ---------------------------------
+  function wetAsphaltCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 5, y / 5, 9, 3);
+      var r = 30 + n * 16, g = 31 + n * 16, b = 35 + n * 18;
+      var sp = hash2(x, y);
+      if (sp < 0.05) { r *= 0.55; g *= 0.55; b *= 0.55; }
+      if (sp > 0.972) { r += 34; g += 36; b += 44; }         // rain glints
+      var crack = vnoise(x / 20 + 3, y / 5, 6, 2);
+      if (crack > 0.8) { r *= 0.55; g *= 0.55; b *= 0.55; }
+      return [r, g, b];
+    });
+  }
+  function brickCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var row = Math.floor(y / 12), ry = y - row * 12;
+      var x2 = x + (row & 1) * 14;
+      var col = Math.floor(x2 / 28), cx = x2 - col * 28;
+      var id = hash2(col + row * 7, row);
+      var base = 62 + id * 26;
+      var r = base * 1.06, g = base * 0.82, b = base * 0.78;
+      if (ry < 1 || cx < 1) { r = 26; g = 24; b = 24; }
+      var grime = vnoise(x / 14, y / 30, 4, 2);
+      if (grime > 0.62) { var k = (grime - 0.62) * 1.5; r *= 1 - k * 0.55; g *= 1 - k * 0.5; b *= 1 - k * 0.45; }
+      var sp = hash2(x + 8, y + 27);
+      if (sp < 0.07) { r *= 0.8; g *= 0.8; b *= 0.8; }
+      return [r, g, b];
+    });
+  }
+  function concreteCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var panel = Math.floor(x / 32);
+      var n = vnoise(x / 7, y / 7, 8, 2);
+      var r = 54 + n * 20, g = 55 + n * 20, b = 60 + n * 22;
+      if (x % 32 === 0 || y === 0) { r *= 0.5; g *= 0.5; b *= 0.5; }
+      var stain = vnoise(x / 10 + 2, y / 40, 4, 2);
+      if (stain > 0.68) { var k = (stain - 0.68) * 1.4; r *= 1 - k * 0.6; g *= 1 - k * 0.6; b *= 1 - k * 0.5; }
+      void panel;
+      return [r, g, b];
+    });
+  }
+  function shutterCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var ridge = y % 6;
+      var r = 44, g = 46, b = 52;
+      if (ridge === 0) { r *= 1.4; g *= 1.4; b *= 1.4; }
+      else if (ridge === 1) { r *= 0.6; g *= 0.6; b *= 0.6; }
+      var rust = vnoise(x / 16, y / 10, 5, 2);
+      if (rust > 0.72) { var k = (rust - 0.72) * 2; r += (100 - r) * k; g += (56 - g) * k; b += (30 - b) * k; }
+      var sp = hash2(x + 5, y + 61);
+      if (sp < 0.06) { r *= 0.7; g *= 0.7; b *= 0.7; }
+      return [r, g, b];
+    });
+  }
+  function metalCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 9, y / 9, 6, 2);
+      var r = 42 + n * 18, g = 43 + n * 18, b = 48 + n * 20;
+      if (x % 20 < 1) { r *= 0.7; g *= 0.7; b *= 0.7; }
+      var rust = vnoise(x / 10 + 3, y / 10, 5, 2);
+      if (rust > 0.74) { var k = (rust - 0.74) * 2.2; r += (95 - r) * k; g += (52 - g) * k; b += (30 - b) * k; }
+      return [r, g, b];
+    });
+  }
+  // chunky pixel glyph -> glowing neon sign face
+  function neonCanvas(glyph, col) {
+    var gw = glyph[0].length, gh = glyph.length;
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var r = 3, g = 3, b = 5;
+      // frame
+      if (x < 3 || x > 60 || y < 3 || y > 60) {
+        var t = (hash2(x, y) * 2 - 1) * 5;
+        return [16 + t, 16 + t, 18 + t];
+      }
+      var sc = Math.floor(44 / gw);
+      var ox = Math.floor((64 - gw * sc) / 2), oy = Math.floor((64 - gh * sc) / 2);
+      var gx = Math.floor((x - ox) / sc), gy = Math.floor((y - oy) / sc);
+      if (gx >= 0 && gx < gw && gy >= 0 && gy < gh && glyph[gy][gx] === 'x') {
+        return [col[0], col[1], col[2]];
+      }
+      // faint bloom around strokes
+      if (gx >= 0 && gx < gw && gy >= 0 && gy < gh) {
+        var near = false, dx, dy;
+        for (dy = -1; dy <= 1 && !near; dy++) for (dx = -1; dx <= 1; dx++) {
+          var nx2 = gx + dx, ny2 = gy + dy;
+          if (nx2 >= 0 && nx2 < gw && ny2 >= 0 && ny2 < gh && glyph[ny2][nx2] === 'x') { near = true; break; }
+        }
+        if (near) return [col[0] * 0.3 + 6, col[1] * 0.3 + 6, col[2] * 0.3 + 8];
+      }
+      var sp = hash2(x + 9, y + 3);
+      if (sp < 0.02) return [col[0] * 0.5, col[1] * 0.5, col[2] * 0.5];
+      return [r, g, b];
+    });
+  }
+  function vendingCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      if (x < 4 || x > 59 || y < 4 || y > 60) return [20, 20, 24];
+      // glowing product window
+      if (y > 8 && y < 44 && x > 8 && x < 52) {
+        var row = Math.floor((y - 8) / 7), colI = Math.floor((x - 8) / 6);
+        var c = [[240, 80, 66], [80, 220, 245], [252, 220, 80], [150, 110, 240], [100, 238, 145]][Math.floor(hash2(colI, row) * 5)];
+        var sh = 0.85 + hash2(colI * 3, row * 7) * 0.45;
+        return [Math.min(255, c[0] * sh), Math.min(255, c[1] * sh), Math.min(255, c[2] * sh)];
+      }
+      if (y > 46 && y < 58 && x > 8 && x < 40) {    // dispensing slot
+        return [30, 30, 34];
+      }
+      return [100, 36, 42];    // brand panel
+    });
+  }
+
+  var GLYPH_SAKE = [
+    '............',
+    '.x.....xxx..',
+    '.x....x...x.',
+    'xxx...x...x.',
+    '.x....xxxxx.',
+    '.x....x...x.',
+    '.x....x.x.x.',
+    'xxx...x.x.x.',
+    '.x....xxxxx.',
+    '.x..x......x',
+    '.x.x.......x',
+    '..x....xxx.x'
+  ];
+  var GLYPH_DEN = [
+    '............',
+    '..xxxxxxx...',
+    '.....x......',
+    '..xxxxxxx...',
+    '..x.x.x.x...',
+    '..xxxxxxx...',
+    '....xxx.....',
+    '...xxxxx....',
+    '..xx.x.xx...',
+    '..x..x..x...',
+    '..xx.x.xx...',
+    '....xxx.....',
+    '......x.x...'
+  ];
+  var GLYPH_MEN = [
+    '............',
+    '.xx..x...x..',
+    '..x..xxxxx..',
+    '..x....x....',
+    '.xx..xxxxx..',
+    '..x..x...x..',
+    '..x..xxxxx..',
+    '.xx....x....',
+    '..x..xxxxx..',
+    '..x..x...x..',
+    '.xx..xxxxx..',
+    '............'
+  ];
+  var GLYPH_24H = [
+    '............',
+    '.xxx...xxx..',
+    'x...x.x...x.',
+    '....x.x...x.',
+    '...x...xxxx.',
+    '..xx...xxx..',
+    '..x.......x.',
+    '..x..xxxxxx.',
+    '..x.......x.',
+    '.xxx......x.',
+    '.......xxxxx',
+    '............'
+  ];
+
+  var asphaltTex = texFrom(wetAsphaltCanvas());
+  var brickTex = texFrom(brickCanvas());
+  var concreteTex = texFrom(concreteCanvas());
+  var shutterTex = texFrom(shutterCanvas());
+  var metalTex = texFrom(metalCanvas());
+  var neonSakeTex = texFrom(neonCanvas(GLYPH_SAKE, [235, 60, 50]));
+  var neonDenTex = texFrom(neonCanvas(GLYPH_DEN, [235, 60, 200]));
+  var neonMenTex = texFrom(neonCanvas(GLYPH_MEN, [50, 225, 235]));
+  var neon24Tex = texFrom(neonCanvas(GLYPH_24H, [240, 210, 60]));
+  var vendingTex = texFrom(vendingCanvas());
+
+  var matAsphalt = ps1Material(asphaltTex);
+  var matBrick = ps1Material(brickTex);
+  var matConcrete = ps1Material(concreteTex);
+  var matShutter = ps1Material(shutterTex);
+  var matMetal = ps1Material(metalTex);
+  var matVending = ps1Material(vendingTex);
+  var matNeonSake = ps1Material(neonSakeTex);
+  var matNeonDen = ps1Material(neonDenTex);
+  var matNeonMen = PS1.privateFlicker(ps1Material(neonMenTex));
+  var matNeon24 = ps1Material(neon24Tex);
+  var matTube = PS1.privateFlicker(ps1Material(PS1.solidTexture(80, 230, 240)));
+
+  // neon lights baked as colored vertex pools
+  var NEONS = [
+    { x: -3.8, y: 4.0, z: 8.0, col: [1.15, 0.24, 0.18], k: 4.6 },
+    { x: 3.8, y: 5.5, z: -2.0, col: [1.05, 0.22, 0.95], k: 4.6 },
+    { x: 3.8, y: 4.5, z: 5.0, col: [0.16, 1.05, 1.15], k: 5.0 },
+    { x: -3.8, y: 3.5, z: -6.0, col: [1.05, 0.9, 0.2], k: 3.8 },
+    { x: 0, y: 2.6, z: -12.0, col: [1.1, 0.55, 0.2], k: 3.6 }    // far warm glow
+  ];
+  var MOON = new THREE.Vector3(-0.2, 0.75, 0.35).normalize();
+
+  var cyberRelight = function (x, y, z, nx, ny, nz) {
+    var ndl = Math.max(0, nx * MOON.x + ny * MOON.y + nz * MOON.z);
+    var hemi = 0.5 + 0.5 * ny;
+    var r = 0.11 + 0.12 * ndl + 0.05 * hemi;
+    var g = 0.115 + 0.13 * ndl + 0.052 * hemi;
+    var b = 0.16 + 0.17 * ndl + 0.07 * hemi;
+    for (var i = 0; i < NEONS.length; i++) {
+      var L = NEONS[i];
+      var dx = L.x - x, dy = L.y - y, dz = L.z - z;
+      var d2 = dx * dx + dy * dy + dz * dz;
+      var fall = L.k / (1 + d2 * 0.13);
+      var inv = 1 / (Math.sqrt(d2) + 1e-4);
+      var nd = Math.max(0, (dx * nx + dy * ny + dz * nz) * inv);
+      var w = fall * (0.4 + 0.6 * nd);
+      r += w * L.col[0]; g += w * L.col[1]; b += w * L.col[2];
+    }
+    return [Math.min(1.15, r), Math.min(1.15, g), Math.min(1.2, b)];
+  };
+
+  PS1.registerScene(function () {
+    setRelight(cyberRelight);
+    var scene = new THREE.Scene();
+    var decals = PS1.newDecalSet();
+    var colliders = [];
+
+    var moon = new THREE.DirectionalLight(0x6677aa, 1);
+    moon.position.copy(MOON).multiplyScalar(30);
+    moon.castShadow = true;
+    moon.shadow.mapSize.set(1024, 1024);
+    moon.shadow.camera.near = 2; moon.shadow.camera.far = 60;
+    moon.shadow.camera.left = -14; moon.shadow.camera.right = 14;
+    moon.shadow.camera.top = 18; moon.shadow.camera.bottom = -18;
+    moon.shadow.bias = -0.004; moon.shadow.normalBias = 0.05;
+    scene.add(moon); scene.add(moon.target);
+
+    scene.add(PS1.makeSky({
+      top: [0.015, 0.02, 0.045], horizon: [0.105, 0.085, 0.15], bottom: [0.03, 0.03, 0.05],
+      sunDir: MOON.toArray(), sunCol: [0, 0, 0], stars: 0,
+      radius: 90
+    }));
+
+    // ground + side service ledges
+    scene.add(PS1.groundGrid(matAsphalt, 0, 0, 7.4, 36, 4, 1, 0, 1));
+
+    // ---------------- flanking building walls --------------------------
+    function wallStrip(x, z0, z1, y0, y1, mat, uvScale) {
+      var n = Math.max(1, Math.round((z1 - z0) / 6));
+      for (var i = 0; i < n; i++) {
+        var za = z0 + (z1 - z0) * i / n, zb = z0 + (z1 - z0) * (i + 1) / n;
+        var side = x < 0 ? 1 : -1;   // face the alley
+        scene.add(PS1.wallSurface(mat,
+          [x, y0, za], [x, y0, zb], [x, y1, zb], [x, y1, za],
+          (zb - za) * uvScale, (y1 - y0) * uvScale, side, 0, 0));
+      }
+    }
+    wallStrip(-4.2, -20, 17, 0, 11.5, matBrick, 0.55);
+    wallStrip(4.2, -20, 17, 0, 13.0, matConcrete, 0.5);
+    // wall tops silhouette clutter: tanks + AC boxes
+    for (var i = 0; i < 6; i++) {
+      var wx = i % 2 ? -4.0 : 4.0, wz = -18 + i * 6 + hash2(i, 3) * 2;
+      var wy = (i % 2 ? 11.5 : 13.0) + 0.5;
+      if (i % 3 === 0) {
+        scene.add(cs(prismMesh(matMetal, wx, wz, 0.7, 1.1, 8, 3, 1, null, wy)));
+      } else {
+        scene.add(cs(boxMesh(matMetal, wx, wy + 0.35, wz, 0.9, 0.7, 0.9, 1.2)));
+      }
+    }
+
+    // ground-floor shopfronts (shutters) with gaps
+    [[-4.14, 4, -1], [-4.14, -9, -6], [-4.14, 12, 9], [4.14, 9, 6], [4.14, -4, -7.5], [4.14, 14, 11.5]]
+      .forEach(function (s) {
+        var side = s[0] < 0 ? 1 : -1;
+        scene.add(PS1.wallSurface(matShutter,
+          [s[0], 0, s[2]], [s[0], 0, s[1]], [s[0], 2.7, s[1]], [s[0], 2.7, s[2]],
+          Math.abs(s[1] - s[2]) * 0.5, 1.35, side, 0, 0));
+      });
+
+    // ---------------- neon signs ---------------------------------------
+    function neonSign(x, y, z, mat, w, h, flicker) {
+      var side = x < 0 ? 1 : -1;
+      var g = new THREE.Group();
+      // box frame + glowing face toward the alley
+      g.add(cs(boxMesh(matMetal, x, y, z, 0.18, h, w, 1.2)));
+      g.add(quadMesh(mat, x + side * 0.165, y, z, side, 0, 0, w * 0.92, h * 0.92, 1, 1));
+      g.add(boxMesh(matTube, x + side * 0.18, y, z - w * 0.52, 0.05, h * 0.9, 0.05, 2, 0, [0.55, 1.6, 1.7]));
+      g.add(boxMesh(matTube, x + side * 0.18, y, z + w * 0.52, 0.05, h * 0.9, 0.05, 2, 0, [0.55, 1.6, 1.7]));
+      if (flicker) {
+        g.add(boxMesh(matMetal, x, y - h / 2 - 0.25, z, 0.10, 0.5, 0.10, 2));   // mount bracket
+      }
+      scene.add(g);
+      return g;
+    }
+    neonSign(-4.28, 3.6, 8.0, matNeonSake, 1.25, 2.7, false);
+    neonSign(4.28, 4.8, -2.0, matNeonDen, 1.25, 2.7, false);
+    neonSign(4.28, 3.9, 5.0, matNeonMen, 1.25, 2.7, true);
+    neonSign(-4.28, 3.3, -6.0, matNeon24, 1.35, 2.4, false);
+    // horizontal neon tube high on the W wall + far-end glow panel
+    scene.add(boxMesh(matTube, -4.1, 2.9, -13.0, 0.06, 0.10, 3.4, 2, 0, [0.5, 1.5, 1.6]));
+    scene.add(boxMesh(PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 150, 60))), 0, 2.4, -19.5, 5.0, 2.6, 0.2, 2, 0, [0.85, 0.5, 0.22]));
+
+    // vending machines
+    [[-3.75, 0.5, 1], [3.75, -10.0, -1]].forEach(function (v, i) {
+      var side = v[2];
+      scene.add(cs(boxMesh(matMetal, v[0], 0.95, v[1], 0.8, 1.9, 1.05, 1.2)));
+      scene.add(quadMesh(matVending, v[0] + side * 0.46, 1.15, v[1], side, 0, 0, 0.9, 1.55, 1, 1));
+      colliders.push({ x0: v[0] - 0.6, z0: v[1] - 0.6, x1: v[0] + 0.6, z1: v[1] + 0.6 });
+      decals.rect(v[0], v[1], 1.3, 1.4, PS1.blobMat, 0.006);
+      void i;
+    });
+
+    // steam vent + grate
+    scene.add(boxMesh(matMetal, 1.8, 0.02, 3.6, 1.1, 0.05, 0.7, 1.5));
+
+    // AC units on walls + drip stains
+    [[-3.9, 3.3, 10.5], [-3.9, 5.8, -9.5], [3.9, 4.6, 12.5]].forEach(function (a) {
+      scene.add(cs(boxMesh(matMetal, a[0], a[1], a[2], 0.55, 0.65, 0.8, 1.2)));
+      scene.add(boxMesh(matMetal, a[0] * 1.012, a[1] - 0.36, a[2], 0.4, 0.08, 0.6, 1.5));
+      var side = a[0] < 0 ? 1 : -1;
+      decals.wall(a[0] + side * 0.03, a[1] - 0.6, a[2], false, 0.5, 1.6, PS1.decalMaterial(0.05, 0.05, 0.06, 0.4));
+    });
+
+    // pipes: vertical + horizontal runs
+    scene.add(cs(boxMesh(matMetal, -4.05, 3.2, 1.8, 0.14, 6.4, 0.14, 2.4)));
+    scene.add(cs(boxMesh(matMetal, -4.05, 6.3, -4.0, 0.14, 0.14, 9.0, 2.4)));
+    scene.add(cs(boxMesh(matMetal, 4.05, 7.4, 2.0, 0.14, 0.14, 12.0, 2.4)));
+
+    // fire escape on the E wall (zigzag platforms + stair boxes)
+    for (var lv = 0; lv < 3; lv++) {
+      var fy = 2.9 + lv * 2.9;
+      scene.add(cs(boxMesh(matMetal, 3.85, fy, 8.0, 0.9, 0.07, 3.0, 1.6)));
+      scene.add(cs(boxMesh(matMetal, 3.85, fy + 1.45, 8.0, 0.9, 2.8, 0.07, 1.6)));   // railing hint
+      scene.add(cs(boxMesh(matMetal, 3.85, fy + 0.9, 8.0, 0.7, 0.08, 2.2, 1.6, lv % 2 ? 0.55 : -0.55)));
+    }
+
+    // overhead cables crossing the alley
+    [[6.2, 10.0], [5.4, 2.0], [6.6, -6.0], [5.8, -13.0]].forEach(function (cab, ci) {
+      var y = cab[0], z = cab[1];
+      for (var s3 = 0; s3 < 4; s3++) {
+        var xa = -4.2 + 8.4 * s3 / 4, xb = -4.2 + 8.4 * (s3 + 1) / 4;
+        var ym = y - 0.5 * Math.sin(Math.PI * (s3 + 0.5) / 4);
+        scene.add(boxMesh(matMetal, (xa + xb) / 2, ym, z, (xb - xa) + 0.02, 0.028, 0.028, 4, 0, [0.04, 0.04, 0.05]));
+      }
+      void ci;
+    });
+
+
+    // ---------------- v6 detail pass ------------------------------------
+    // posters + graffiti (Bayer-dithered colour patches on the walls)
+    var matPoster1 = PS1.decalMaterial(0.68, 0.24, 0.18, 0.88);
+    var matPoster2 = PS1.decalMaterial(0.20, 0.56, 0.68, 0.85);
+    var matPoster3 = PS1.decalMaterial(0.88, 0.70, 0.16, 0.88);
+    var matGraf = PS1.decalMaterial(0.90, 0.25, 0.75, 0.42);
+    decals.wall(-4.16, 2.1, 3.0, true, 1.1, 1.4, matPoster1);
+    decals.wall(-4.16, 1.6, 10.8, true, 0.9, 1.2, matPoster2);
+    decals.wall(-4.16, 2.0, -8.6, true, 1.2, 0.9, matPoster3);
+    decals.wall(4.16, 2.3, 9.4, true, 1.2, 0.5, matGraf);
+    decals.wall(4.16, 1.7, -3.8, true, 1.0, 1.3, matPoster1);
+    // trash bag pile by the west vending machine
+    var matBag = ps1Material(PS1.solidTexture(22, 22, 26));
+    scene.add(PS1.blobMesh(matBag, -3.55, 0.28, 1.6, 0.30, 0.9, 0.3, function () { return [1, 1, 1]; }));
+    scene.add(PS1.blobMesh(matBag, -3.3, 0.22, 2.05, 0.24, 1.0, 0.3, function () { return [0.92, 0.92, 1]; }));
+    scene.add(PS1.blobMesh(matBag, -3.6, 0.52, 1.85, 0.22, 0.95, 0.3, function () { return [1, 1, 1.05]; }));
+    // flattened cardboard boxes
+    var matBox = ps1Material(PS1.solidTexture(122, 92, 58));
+    scene.add(cs(boxMesh(matBox, 3.5, 0.12, -12.4, 0.55, 0.22, 0.6, 1.4, 0.18)));
+    scene.add(cs(boxMesh(matBox, 3.45, 0.37, -12.3, 0.5, 0.22, 0.55, 1.4, -0.25)));
+    colliders.push({ x0: 3.1, z0: -12.8, x1: 3.9, z1: -11.9 });
+    // bicycle locked to a power pole
+    (function () {
+      var matBike = ps1Material(PS1.solidTexture(70, 110, 150));
+      var bx = 5.65, bz = -1.6;
+      [-0.52, 0.52].forEach(function (w) {
+        var wheel = prismMesh(matMetal, 0, 0, 0.30, 0.05, 8, 1.8, 0.3, null, 0);
+        wheel.rotation.y = Math.PI / 2;
+        wheel.position.set(bx + w * 0.5, 0.33, bz);
+        scene.add(wheel);
+      });
+      scene.add(boxMesh(matBike, bx - 0.2, 0.60, bz, 0.9, 0.05, 0.05, 2, 0.14));
+      scene.add(boxMesh(matBike, bx - 0.2, 0.46, bz, 0.05, 0.42, 0.05, 2));
+    })();
+    // two extra neon strips (one with a dying ballast)
+    var matStripA = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 120, 200)));
+    var matStripB = ps1Material(PS1.solidTexture(90, 255, 240));
+    scene.add(boxMesh(matStripA, -4.10, 2.05, 6.4, 0.05, 0.08, 1.6, 2, 0, [1.2, 0.45, 0.9]));
+    scene.add(boxMesh(matStripB, 4.10, 3.4, -8.4, 0.05, 0.08, 1.2, 2, 0, [0.4, 1.2, 1.1]));
+    // satellite dishes on the wall tops
+    [[-4.0, 8.6, 7.4], [4.0, 9.4, 8.2]].forEach(function (d) {
+      scene.add(cs(boxMesh(matMetal, d[0], d[2] + 0.25, d[1], 0.08, 0.5, 0.08, 2)));
+      var dish = prismMesh(matMetal, 0, 0, 0.30, 0.07, 8, 2, 0.3, null, 0);
+      dish.rotation.x = -0.9;
+      dish.rotation.y = d[0] < 0 ? 0.7 : -0.7;
+      dish.position.set(d[0], d[2] + 0.72, d[1]);
+      scene.add(dish);
+    });
+    // stoop: steps + door + slab awning on the west wall
+    scene.add(boxMesh(matConcrete, -3.8, 0.09, 12.3, 1.4, 0.18, 1.3, 1.2));
+    scene.add(boxMesh(matConcrete, -3.55, 0.25, 12.3, 1.1, 0.14, 1.0, 1.2));
+    scene.add(boxMesh(matMetal, -4.13, 1.18, 12.3, 0.10, 2.1, 1.0, 1.6));
+    scene.add(boxMesh(matShutter, -3.95, 2.45, 12.3, 0.75, 0.05, 1.35, 1.2));
+    colliders.push({ x0: -4.15, z0: 11.6, x1: -3.35, z1: 13.0 });
+    // wall vent fan + utility boxes
+    (function () {
+      var fan = prismMesh(matMetal, 0, 0, 0.34, 0.06, 8, 2, 0.3, null, 0);
+      fan.rotation.y = Math.PI / 2;
+      fan.position.set(4.14, 3.1, 2.6);
+      scene.add(fan);
+      decals.wall(4.165, 3.1, 2.6, true, 0.4, 0.4, PS1.decalMaterial(0.02, 0.02, 0.03, 0.85));
+    })();
+    scene.add(boxMesh(matMetal, -4.12, 1.5, 6.9, 0.10, 0.3, 0.4, 1.4));
+    scene.add(boxMesh(matMetal, -4.12, 1.4, -4.9, 0.10, 0.26, 0.34, 1.4));
+    // umbrella abandoned by the vending machine
+    (function () {
+      var matUmb = ps1Material(PS1.solidTexture(198, 60, 88));
+      var canopy = prismMesh(matUmb, 0, 0, 0.5, 0.10, 8, 2.2, 0.4, null, 0);
+      canopy.rotation.z = 0.5;
+      canopy.position.set(-3.15, 0.85, 0.9);
+      scene.add(canopy);
+      scene.add(boxMesh(matMetal, -3.32, 0.55, 0.83, 0.05, 1.1, 0.05, 2, 0.5));
+    })();
+    // puddles + neon light pools on wet ground
+    decals.oct(-1.6, 6.4, 1.3, PS1.decalMaterial(0.05, 0.05, 0.085, 0.62), 0.004, 90);
+    decals.oct(2.2, 4.2, 1.1, PS1.decalMaterial(0.03, 0.09, 0.11, 0.5), 0.004, 91);
+    decals.oct(0.4, -3.4, 1.5, PS1.decalMaterial(0.10, 0.045, 0.10, 0.45), 0.004, 92);
+    decals.oct(-2.6, -7.2, 1.0, PS1.decalMaterial(0.10, 0.09, 0.03, 0.5), 0.004, 93);
+    decals.oct(1.2, 0.5, 1.4, PS1.decalMaterial(0.30, 0.08, 0.07, 0.3), 0.004, 94);      // red pool under sake sign
+    decals.oct(2.4, 5.1, 1.2, PS1.decalMaterial(0.04, 0.30, 0.32, 0.3), 0.004, 95);      // cyan pool
+    scene.add(decals.blobGroup); scene.add(decals.decalGroup);
+
+    // rain + steam
+    var rain = PS1.makeParticles({
+      mode: 'rain', count: 520, color: [0.62, 0.70, 0.86],
+      size: 0.012, speed: 16, sway: -0.35,
+      area: [-4, 4, -18, 16, 11]
+    });
+    var steam = PS1.makeParticles({
+      mode: 'steam', count: 90, color: [0.36, 0.38, 0.45],
+      size: 0.05, speed: 0.8, sway: 0.2,
+      area: [1.3, 2.3, 3.1, 4.1, 2.6]
+    });
+    scene.add(rain); scene.add(steam);
+
+    return {
+      name: '赛博朋克雨巷',
+      scene: scene,
+      colliders: colliders,
+      bounds: { x0: -3.35, x1: 3.35, z0: -18.2, z1: 16.2 },
+      spawn: [0.9, 14.6, Math.atan2(-(-0.6 - 0.9), -(-7 - 14.6)), 0.03],
+      idle: { pos: [0.9, 1.62, 14.6], target: [-0.6, 2.3, -7] },
+      fog: { color: [0.105, 0.085, 0.15], near: 7, far: 38 },
+      noFlicker: true,
+      blobGroup: decals.blobGroup,
+      particles: [rain, steam],
+      update: function (t) {
+        // the noodle sign has a bad ballast
+        var f = (Math.sin(t * 31.7) > 0.92 || Math.sin(t * 7.3) > 0.995) ? 0.25 : 0.92 + 0.08 * Math.sin(t * 47);
+        matNeonMen.uniforms.uFlicker.value = f;
+        matTube.uniforms.uFlicker.value = 0.9 + 0.1 * Math.sin(t * 13.3);
+        matStripA.uniforms.uFlicker.value = Math.sin(t * 17.3) > 0.7 ? 0.2 : (0.8 + 0.2 * Math.sin(t * 5.1));
+      }
+    };
+  });
+})();
+
+;
+// boot after all scenes have registered (build.js concatenates files in order)
+PS1.boot();
 
 </script>
 </body>

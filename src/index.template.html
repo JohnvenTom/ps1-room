@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>PS1 Room — 仿射纹理蠕动还原</title>
+<title>PS1 Scenes — 仿射纹理蠕动还原 · 五场景</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
@@ -23,12 +23,17 @@
   }
   .on  { color: #71ff71; }
   .off { color: #ff5f56; }
+  #fade {
+    position: fixed; inset: 0; background: #000; opacity: 0;
+    transition: opacity .24s ease; pointer-events: none; z-index: 5;
+  }
 </style>
 </head>
 <body>
 <canvas id="gl"></canvas>
+<div id="fade"></div>
 <div id="hud"></div>
-<div id="hint"><kbd>M</kbd> / click to roam &mdash; <kbd>W A S D</kbd> move &nbsp;<kbd>Shift</kbd> run &nbsp;mouse look (hold LMB to drag if unlocked) &nbsp;<kbd>Esc</kbd>/<kbd>M</kbd> exit<br><kbd>1</kbd> affine <kbd>2</kbd> vertex-snap <kbd>3</kbd> nearest <kbd>4</kbd> flicker <kbd>5</kbd> CRT <kbd>6</kbd> HUD <kbd>7</kbd> shadows &nbsp;<kbd>[</kbd><kbd>]</kbd> FOV (30&deg;&ndash;100&deg;) &mdash; idle mode: camera micro-drift, watch wall grout lines crawl</div>
+<div id="hint"><kbd>N</kbd> next scene &mdash; <kbd>M</kbd> / click to roam &mdash; <kbd>W A S D</kbd> move &nbsp;<kbd>Shift</kbd> run &nbsp;mouse look (hold LMB to drag if unlocked) &nbsp;<kbd>Esc</kbd>/<kbd>M</kbd> exit<br><kbd>1</kbd> affine <kbd>2</kbd> vertex-snap <kbd>3</kbd> nearest <kbd>4</kbd> flicker <kbd>5</kbd> CRT <kbd>6</kbd> HUD <kbd>7</kbd> shadows <kbd>8</kbd> fog <kbd>9</kbd> particles &nbsp;<kbd>[</kbd><kbd>]</kbd> FOV (30&deg;&ndash;100&deg;) &mdash; idle mode: camera micro-drift, watch textures crawl</div>
 <script>/*__THREE__*/</script>
 <script>/*__APP__*/</script>
 </body>
