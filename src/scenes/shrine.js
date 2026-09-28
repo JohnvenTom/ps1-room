@@ -346,7 +346,7 @@
         scene.add(cs(boxMesh(matBark, cx + p[0], 1.05, cz + p[1], 0.10, 2.1, 0.10, 2)));
       });
       scene.add(boxMesh(matStone, cx, 0.55, cz, 1.45, 0.9, 1.45, 1.0));
-      scene.add(PS1.groundGrid(matWater, cx, cz, 1.0, 1.0, 1, 0.5, 1.02, 1));
+      scene.add(PS1.groundGrid(matWater, cx, cz, 1.0, 1.0, 1, 0.5, 1.06, 1));
       scene.add(cs(quadCorners(matRoof, [cx - 1.0, 2.12, cz - 1.0], [cx + 1.0, 2.12, cz - 1.0],
         [cx + 0.75, 2.62, cz], [cx - 0.75, 2.62, cz], 2, 1.4)));
       scene.add(cs(quadCorners(matRoof, [cx - 1.0, 2.12, cz + 1.0], [cx + 1.0, 2.12, cz + 1.0],

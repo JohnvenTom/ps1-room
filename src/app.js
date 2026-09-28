@@ -730,7 +730,7 @@
   PS1.sceneCount = function () { return SCENES.length; };
 
   // ====================== camera: idle drift + roam ====================
-  var camera = new THREE.PerspectiveCamera(state.fov, IW / IH, 0.1, 200);
+  var camera = new THREE.PerspectiveCamera(state.fov, IW / IH, 0.15, 200);
   var basePos = new THREE.Vector3();
   var baseTarget = new THREE.Vector3();
   var idlePos = new THREE.Vector3(), idleQuat = new THREE.Quaternion();

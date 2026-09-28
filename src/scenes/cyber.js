@@ -326,7 +326,7 @@
     // AC units on walls + drip stains
     [[-3.9, 3.3, 10.5], [-3.9, 5.8, -9.5], [3.9, 4.6, 12.5]].forEach(function (a) {
       scene.add(cs(boxMesh(matMetal, a[0], a[1], a[2], 0.55, 0.65, 0.8, 1.2)));
-      scene.add(boxMesh(matMetal, a[0] * 1.012, a[1] - 0.36, a[2], 0.4, 0.08, 0.6, 1.5));
+      scene.add(boxMesh(matMetal, a[0], a[1] - 0.40, a[2], 0.34, 0.06, 0.5, 1.5));
       var side = a[0] < 0 ? 1 : -1;
       decals.wall(a[0] + side * 0.03, a[1] - 0.6, a[2], false, 0.5, 1.6, PS1.decalMaterial(0.05, 0.05, 0.06, 0.4));
     });
@@ -371,7 +371,7 @@
     }));
     var matMarquee = ps1Material(marqueeTex);
     scene.add(cs(boxMesh(matMetal, -4.1, 5.9, 4.2, 0.16, 0.6, 2.6, 1.4)));
-    scene.add(quadMesh(matMarquee, -4.01, 5.9, 4.2, 1, 0, 0, 2.35, 0.46, 1, 1));
+    scene.add(quadMesh(matMarquee, -3.96, 5.9, 4.2, 1, 0, 0, 2.35, 0.46, 1, 1));
     // string lights across the alley (two catenaries, warm bulbs)
     var matBulbStr = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 210, 140)));
     function lightString(z, y0) {
@@ -398,7 +398,7 @@
       var matLocker = ps1Material(PS1.solidTexture(70, 76, 84));
       for (var l = 0; l < 3; l++) {
         scene.add(cs(boxMesh(matLocker, -3.85, 0.9, -14.6 + l * 0.5, 0.45, 1.8, 0.46, 1.4)));
-        scene.add(boxMesh(matMetal, -3.62, 1.1, -14.6 + l * 0.5, 0.02, 0.3, 0.06, 2));
+        scene.add(boxMesh(matMetal, -3.58, 1.1, -14.6 + l * 0.5, 0.02, 0.3, 0.06, 2));
       }
       colliders.push({ x0: -4.1, z0: -14.95, x1: -3.6, z1: -13.0 });
     })();
@@ -409,7 +409,7 @@
       fan.position.set(4.14, 6.2, -5.5);
       scene.add(fan);
       for (var bar = 0; bar < 3; bar++) {
-        scene.add(boxMesh(matMetal, 4.06, 6.2, -5.5 - 0.5 + bar * 0.5, 0.04, 1.3, 0.05, 2, 0, [0.16, 0.17, 0.19]));
+        scene.add(boxMesh(matMetal, 4.01, 6.2, -5.5 - 0.5 + bar * 0.5, 0.04, 1.3, 0.05, 2, 0, [0.16, 0.17, 0.19]));
       }
     })();
     // two more cable catenaries + transformer on the pole
@@ -426,7 +426,7 @@
     scene.add(prismMesh(matMetal, 5.9, -1.65, 0.05, 0.16, 6, 1, 0.4, null, 5.35));
     // newspaper box
     scene.add(cs(boxMesh(matMetal, -3.9, 0.5, 11.8, 0.5, 0.9, 0.4, 1.3)));
-    scene.add(boxMesh(ps1Material(PS1.solidTexture(210, 205, 195)), -3.64, 0.62, 11.8, 0.02, 0.35, 0.26, 2, 0, [0.8, 0.78, 0.72]));
+    scene.add(boxMesh(ps1Material(PS1.solidTexture(210, 205, 195)), -3.60, 0.62, 11.8, 0.02, 0.35, 0.26, 2, 0, [0.8, 0.78, 0.72]));
     colliders.push({ x0: -4.2, z0: 11.5, x1: -3.6, z1: 12.1 });
     // dumpster near the south entrance
     (function () {
