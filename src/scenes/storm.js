@@ -199,8 +199,8 @@
       var n = vnoise(x / 6, y / 6, 6, 2);
       var k = 0.7 + n * 0.5;
       var r = 16 * k, g = 26 * k, b = 40 * k;
-      if (y < 10) { r += 150; g += 160; b += 165; }                 // foam crest along the top
-      else if (y < 16) { r += 60; g += 68; b += 72; }
+      if (y < 13) { r += 175; g += 182; b += 186; }                 // foam crest along the top
+      else if (y < 21) { r += 70; g += 78; b += 82; }
       var streak = hash2(x, Math.floor(y / 6));
       if (streak < 0.18 && y < 26) { r += 70; g += 76; b += 80; }   // streaky foam
       return [r, g, b];
@@ -225,7 +225,7 @@
       scene.add(splash);
       ridge.userData.splash = splash;
     });
-    var IMPACT_Z = -23.5;   // middle cliff tier front face
+    var IMPACT_Z = -26.5;   // just touching the middle cliff tier front face (z=-24)
 
     // wind-whipped flag on the platform
     var flag = new THREE.Group();
@@ -245,8 +245,8 @@
 
     // ---------------- weather -------------------------------------------
     var rain = PS1.makeParticles({
-      mode: 'rain', count: 1600, color: [0.68, 0.76, 0.94],
-      size: 0.022, speed: 19, sway: -1.1,   // wind-lashed slant
+      mode: 'rain', count: 6000, color: [0.72, 0.80, 0.98],
+      size: 0.1, speed: 19, sway: -1.1,   // wind-lashed slant
       area: [-26, 26, -74, 12, 26], y0: 3
     });
     var spray1 = PS1.makeParticles({
@@ -302,12 +302,12 @@
         // towering waves: surge toward the cliff, splash on impact, recycle out at sea
         waves.forEach(function (w) {
           var u = w.userData;
-          u.z += u.sp * 0.032;
+          if (u.z < IMPACT_Z) u.z += u.sp * 0.032;   // surge until the ridge meets the cliff face
           w.position.set(u.x, 0.4 + 0.5 * Math.sin(t * 1.3 + u.wi), u.z);
           w.rotation.x = 0.1 * Math.sin(t * 0.9 + u.wi * 1.7);
           if (u.z > IMPACT_Z && u.hit < 0) {
             u.hit = t;
-            u.splash.position.set(u.x, 1.4, IMPACT_Z - 0.8);
+            u.splash.position.set(u.x, 2.2, IMPACT_Z + 1.6);
             u.splash.visible = true;
           }
           if (u.hit > 0) {
@@ -317,7 +317,7 @@
             } else {
               u.splash.visible = false;
               u.hit = -9;
-              u.z = -34 - Math.random() * 46;
+              u.z = -38 - Math.random() * 34;
               u.x = -48 + Math.random() * 96;
             }
           }

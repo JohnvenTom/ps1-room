@@ -554,7 +554,8 @@
       uH: { value: cfg.area[4] },
       uSpeed: { value: cfg.speed || 1 },
       uSway: { value: cfg.sway || 0.3 },
-      uY0: { value: cfg.y0 || 0 }
+      uY0: { value: cfg.y0 || 0 },
+      uFlash: shared.uFlash
     };
     var mat = new THREE.ShaderMaterial({
       uniforms: u,
@@ -577,7 +578,7 @@
         '             uArea.z + aSeed.z * wz + cos(uTime * 0.7 + aSeed.z * 30.0) * uSway);',
         '  } else if (uMode < 1.5) {',                           // rain
         '    float y = uY0 + uH - mod(aSeed.y * uH + uTime * uSpeed, uH);',
-        '    p = vec3(uArea.x + aSeed.x * wx + y * uSway * 0.25 + uTime * uSway, y,',
+        '    p = vec3(uArea.x + mod(aSeed.x * wx + uTime * uSway, wx) + y * uSway * 0.25, y,',
         '             uArea.z + aSeed.z * wz);',
         '  } else if (uMode < 2.5) {',                           // steam
         '    float y = uY0 + mod(aSeed.y * uH + uTime * uSpeed, uH);',
@@ -608,18 +609,13 @@
       fragmentShader: [
         'uniform sampler2D uBayer;',
         'uniform vec3 uColor;',
+        'uniform float uFlash;',
         'varying float vFade;',
         'void main() {',
-        '  if (uNebula.r + uNebula.g + uNebula.b > 0.001) {',
-        '    vec3 ax2 = normalize(cross(uNebAxis, vec3(0.3, 0.8, 0.5)));',
-        '    float band = pow(max(0.0, 1.0 - abs(dot(d, uNebAxis)) * 2.6), 3.0);',
-        '    float band2 = pow(max(0.0, 1.0 - abs(dot(d, ax2)) * 3.4), 3.0);',
-        '    col += uNebula * (band * 0.22 + band2 * 0.13);',
-        '  }',
-        '  col += uFlash * vec3(0.75, 0.8, 1.0);',
         '  float b = texture2D(uBayer, (floor(mod(gl_FragCoord.xy, 4.0)) + 0.5) / 4.0).r;',
         '  if (b > vFade) discard;',
         '  vec3 c = uColor * (0.75 + 0.25 * vFade);',
+        '  c += uFlash * vec3(0.75, 0.8, 1.0);',
         '  c = clamp(c + (b - 0.5) * (1.5 / 32.0), 0.0, 1.0);',
         '  c = floor(c * 31.0 + 0.5) / 31.0;',
         '  gl_FragColor = vec4(c, 1.0);',
@@ -667,13 +663,6 @@
         'uniform vec3 uCol;',
         'uniform float uDens;',
         'void main() {',
-        '  if (uNebula.r + uNebula.g + uNebula.b > 0.001) {',
-        '    vec3 ax2 = normalize(cross(uNebAxis, vec3(0.3, 0.8, 0.5)));',
-        '    float band = pow(max(0.0, 1.0 - abs(dot(d, uNebAxis)) * 2.6), 3.0);',
-        '    float band2 = pow(max(0.0, 1.0 - abs(dot(d, ax2)) * 3.4), 3.0);',
-        '    col += uNebula * (band * 0.22 + band2 * 0.13);',
-        '  }',
-        '  col += uFlash * vec3(0.75, 0.8, 1.0);',
         '  float b = texture2D(uBayer, (floor(mod(gl_FragCoord.xy, 4.0)) + 0.5) / 4.0).r;',
         '  if (b >= uDens) discard;',
         '  gl_FragColor = vec4(uCol, 1.0);',
