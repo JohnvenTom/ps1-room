@@ -72,6 +72,7 @@
 
   var SUNDIR = new THREE.Vector3(0.15, 0.35, -0.92).normalize();   // sun sits in the window cone
   var INTERIOR = [3.2, 3.0, -1.6];                                 // ceiling light position
+  var HOLO = [0.3, 1.35, 0.6];                                       // holo-table cyan glow
   var spaceRelight = function (x, y, z, nx, ny, nz) {
     var ndl = Math.max(0, nx * SUNDIR.x + ny * SUNDIR.y + nz * SUNDIR.z);
     // interior fill from ceiling strips
@@ -80,10 +81,14 @@
     var inv = 1 / (d + 1e-4);
     var nd = Math.max(0, (dx * nx + dy * ny + dz * nz) * inv);
     var fill = Math.max(0, 1.9 - 0.15 * d) * (0.45 + 0.55 * nd);
+    var hx = HOLO[0] - x, hy = HOLO[1] - y, hz = HOLO[2] - z;
+    var hd = Math.sqrt(hx * hx + hy * hy + hz * hz);
+    var hnd = Math.max(0, (hx * nx + hy * ny + hz * nz) / (hd + 1e-4));
+    var hfall = 1.1 / (1 + hd * hd * 0.35) * (0.4 + 0.6 * hnd);
     var sun = ndl * 1.15;   // hard sunlight through the window
-    var r = sun * 1.05 + fill * 0.95;
-    var g = sun * 1.02 + fill * 1.0;
-    var b = sun * 0.95 + fill * 1.14;
+    var r = sun * 1.05 + fill * 0.95 + hfall * 0.22;
+    var g = sun * 1.02 + fill * 1.0 + hfall * 0.62;
+    var b = sun * 0.95 + fill * 1.14 + hfall * 0.75;
     return [Math.min(1.22, r), Math.min(1.2, g), Math.min(1.2, b)];
   };
 
@@ -106,7 +111,7 @@
     scene.add(PS1.makeSky({
       top: [0.004, 0.005, 0.012], horizon: [0.004, 0.005, 0.012], bottom: [0.002, 0.003, 0.006],
       sunDir: SUNDIR.toArray(), sunCol: [1.5, 1.42, 1.2], sunCut: 0.99955, sunGlow: 0.10,
-      stars: 1.2, meteors: 0, radius: 95
+      stars: 1.2, meteors: 0, radius: 95, nebula: [0.10, 0.06, 0.17], nebAxis: [0.5, 0.35, 0.55]
     }));
 
     // ---------------- ringed gas giant + moon --------------------------
@@ -165,25 +170,28 @@
     scene.add(PS1.wallSurface(matPanel, [4.2, 0, R.zS], [4.2, 0, R.zN], [4.2, 3.2, R.zN], [4.2, 3.2, R.zS], 5, 1.6, -1, 0, 0));
     scene.add(PS1.wallSurface(matPanel, [4.2, 0, R.zS], [-4.2, 0, R.zS], [-4.2, 3.2, R.zS], [4.2, 3.2, R.zS], 5, 1.6, 0, 0, -1));
     // north wall: solid border + big window opening (void shows the dome)
-    var WIN = { x0: -2.7, x1: 2.7, y0: 0.75, y1: 2.85 };
+    var WIN = { x0: -3.3, x1: 3.3, y0: 0.60, y1: 3.00 };
     scene.add(PS1.wallSurface(matPanel, [-4.2, 0, R.zN], [WIN.x0, 0, R.zN], [WIN.x0, 3.2, R.zN], [-4.2, 3.2, R.zN], 2, 1.6, 0, 0, 1));
     scene.add(PS1.wallSurface(matPanel, [WIN.x1, 0, R.zN], [4.2, 0, R.zN], [4.2, 3.2, R.zN], [WIN.x1, 3.2, R.zN], 2, 1.6, 0, 0, 1));
     scene.add(PS1.wallSurface(matPanel, [WIN.x0, 0, R.zN], [WIN.x1, 0, R.zN], [WIN.x1, WIN.y0, R.zN], [WIN.x0, WIN.y0, R.zN], 5, 0.5, 0, 0, 1));
     scene.add(PS1.wallSurface(matPanel, [WIN.x0, WIN.y1, R.zN], [WIN.x1, WIN.y1, R.zN], [WIN.x1, 3.2, R.zN], [WIN.x0, 3.2, R.zN], 5, 0.4, 0, 0, 1));
     // thick window frame + mullions (they cast the shaft shadow on the floor)
-    scene.add(cs(boxMesh(matPanel, 0, WIN.y0, R.zN + 0.06, 5.8, 0.16, 0.22, 1.4)));
-    scene.add(cs(boxMesh(matPanel, 0, WIN.y1, R.zN + 0.06, 5.8, 0.16, 0.22, 1.4)));
-    [-1.35, 0, 1.35].forEach(function (mx) {
-      scene.add(cs(boxMesh(matPanel, mx, (WIN.y0 + WIN.y1) / 2, R.zN + 0.06, 0.14, 2.3, 0.22, 1.4)));
+    scene.add(cs(boxMesh(matPanel, 0, WIN.y0, R.zN + 0.06, 7.4, 0.18, 0.26, 1.4)));
+    scene.add(cs(boxMesh(matPanel, 0, WIN.y1, R.zN + 0.06, 7.4, 0.18, 0.26, 1.4)));
+    [-1.65, 0, 1.65].forEach(function (mx) {
+      scene.add(cs(boxMesh(matPanel, mx, (WIN.y0 + WIN.y1) / 2, R.zN + 0.06, 0.14, 2.55, 0.26, 1.4)));
     });
+    // deep beveled reveals angling back to the wall
+    scene.add(cs(quadCorners(matPanel, [WIN.x0 - 0.14, WIN.y0 - 0.05, R.zN + 0.28], [WIN.x0 - 0.95, 0.02, R.zN], [WIN.x0 - 0.95, 3.2, R.zN], [WIN.x0 - 0.14, WIN.y1 + 0.05, R.zN + 0.28], 2, 1.6)));
+    scene.add(cs(quadCorners(matPanel, [WIN.x1 + 0.14, WIN.y0 - 0.05, R.zN + 0.28], [WIN.x1 + 0.95, 0.02, R.zN], [WIN.x1 + 0.95, 3.2, R.zN], [WIN.x1 + 0.14, WIN.y1 + 0.05, R.zN + 0.28], 2, 1.6)));
     // handrail along the window
-    scene.add(boxMesh(matStrip, 0, 0.95, R.zN + 0.5, 5.4, 0.06, 0.06, 2, 0, [0.5, 0.55, 0.62]));
-    [-2.4, -0.8, 0.8, 2.4].forEach(function (px) {
+    scene.add(boxMesh(matStrip, 0, 0.95, R.zN + 0.5, 7.0, 0.06, 0.06, 2, 0, [0.5, 0.55, 0.62]));
+    [-3.2, -1.1, 1.1, 3.2].forEach(function (px) {
       scene.add(boxMesh(matStrip, px, 0.72, R.zN + 0.5, 0.05, 0.5, 0.05, 2, 0, [0.4, 0.45, 0.52]));
     });
 
     // sun shaft pool on the deck (bright decal where the window projects)
-    decals.rect(0.6, -3.6, 3.4, 1.9, PS1.decalMaterial(1.0, 0.97, 0.88, 0.5), 0.012);
+    decals.rect(0.5, -3.4, 4.8, 2.2, PS1.decalMaterial(1.0, 0.97, 0.88, 0.5), 0.012);
 
     // ---------------- lounge furniture ----------------------------------
     // console desk under the window with blinking readouts
@@ -227,9 +235,14 @@
     scene.add(boxMesh(matPanel, 3.2, 0.55, 1.8, 0.7, 0.06, 0.7, 1.4));
     scene.add(prismMesh(matPanel, 3.2, 1.8, 0.12, 0.3, 6, 1.4, 0.6, null, 0.4));
     scene.add(prismMesh(ps1Material(PS1.solidTexture(235, 235, 240)), 3.2, 1.8, 0.07, 0.12, 6, 1.2, 0.4, null, 0.7));
-    // ceiling light strips
-    scene.add(boxMesh(matStrip, -1.6, 3.05, -1.6, 3.2, 0.08, 0.3, 2, 0, [1.5, 1.5, 1.55]));
-    scene.add(boxMesh(matStrip, 1.6, 3.05, 1.6, 3.2, 0.08, 0.3, 2, 0, [1.5, 1.5, 1.55]));
+    // ceiling: structural ribs with light strips between + a red emergency beacon
+    [-4.2, -1.4, 1.4, 4.2].forEach(function (rz) {
+      scene.add(boxMesh(matPanel, 0, 3.04, rz, 8.4, 0.2, 0.26, 1.4));
+    });
+    [-2.8, 0, 2.8].forEach(function (rz) {
+      scene.add(boxMesh(matStrip, 0, 3.05, rz, 7.0, 0.07, 0.26, 2, 0, [1.5, 1.5, 1.55]));
+    });
+    scene.add(prismMesh(matBlinkR, 0, 0, 0.14, 0.1, 8, 1.4, 0.4, null, 0).translateX(0).translateY(2.92).translateZ(0.2));
     // wall pipes + airlock door on the east wall
     scene.add(cs(boxMesh(ps1Material(PS1.solidTexture(84, 88, 96)), 4.1, 2.6, -1.0, 0.12, 0.12, 5.2, 1.4)));
     scene.add(cs(boxMesh(matPanel, 4.12, 1.15, 2.6, 0.12, 2.3, 1.9, 1.2)));
@@ -313,6 +326,12 @@
       vacuum.position.set(-2.0, 0.05, 0.5);
       scene.add(vacuum);
     })();
+
+    // floor cable gully with grate bars
+    scene.add(boxMesh(ps1Material(PS1.solidTexture(30, 32, 38)), 0, 0.004, -0.6, 1.1, 0.02, 7.6, 1.2));
+    for (var gb = 0; gb < 13; gb++) {
+      scene.add(boxMesh(matStrip, 0, 0.016, -4.2 + gb * 0.6, 1.06, 0.02, 0.07, 1.4, 0, [0.32, 0.34, 0.4]));
+    }
 
     // dust motes floating in the sun shaft
     var motes = PS1.makeParticles({
