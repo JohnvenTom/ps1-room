@@ -15,6 +15,10 @@ const appParts = [
   path.join(root, 'src/scenes/town.js'),
   path.join(root, 'src/scenes/market.js'),
   path.join(root, 'src/scenes/cyber.js'),
+  path.join(root, 'src/scenes/snow.js'),
+  path.join(root, 'src/scenes/desert.js'),
+  path.join(root, 'src/scenes/watertown.js'),
+  path.join(root, 'src/scenes/space.js'),
   path.join(root, 'src/main.js')
 ];
 const app = appParts

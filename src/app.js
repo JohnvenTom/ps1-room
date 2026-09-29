@@ -480,7 +480,7 @@
         '  if (uStars > 0.0) {',
         '    vec3 sp = floor(d * 160.0);',
         '    float st = h31(sp);',
-        '    float star = step(0.9982, st) * uStars * smoothstep(0.03, 0.25, d.y);',
+        '    float star = step(uStars > 1.0 ? 0.9968 : 0.9982, st) * min(uStars, 1.0) * smoothstep(0.03, 0.25, d.y);',
         '    col += star * (0.55 + 0.45 * sin(uTime * 2.5 + st * 90.0));',
         '  }',
         '  if (uMeteors > 0.0) {',                       // one shooting star every ~9 s

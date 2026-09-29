@@ -527,7 +527,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         '  if (uStars > 0.0) {',
         '    vec3 sp = floor(d * 160.0);',
         '    float st = h31(sp);',
-        '    float star = step(0.9982, st) * uStars * smoothstep(0.03, 0.25, d.y);',
+        '    float star = step(uStars > 1.0 ? 0.9968 : 0.9982, st) * min(uStars, 1.0) * smoothstep(0.03, 0.25, d.y);',
         '    col += star * (0.55 + 0.45 * sin(uTime * 2.5 + st * 90.0));',
         '  }',
         '  if (uMeteors > 0.0) {',                       // one shooting star every ~9 s
@@ -3735,6 +3735,1540 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         marqueeTex.offset.x = -t * 0.22;
         matBulbStr.uniforms.uFlicker.value = 0.88 + 0.12 * Math.sin(t * 11.3) * Math.sin(t * 2.9);
         matCatEye.uniforms.uFlicker.value = ((t * 0.21) % 1 < 0.86) ? 1 : 0.05;
+      }
+    };
+  });
+})();
+
+;
+(function () {
+  'use strict';
+  // ======================= 雪岭驿站（蓝调时分） ========================
+  var texFrom = PS1.texFrom, pixelLoop = PS1.pixelLoop, newCanvas = PS1.newCanvas;
+  var hash2 = PS1.hash2, vnoise = PS1.vnoise;
+  var boxMesh = PS1.boxMesh, prismMesh = PS1.prismMesh, quadMesh = PS1.quadMesh;
+  var quadCorners = PS1.quadCorners, blobMesh = PS1.blobMesh;
+  var cs = PS1.cs, setRelight = PS1.setRelight;
+  var ps1Material = PS1.ps1Material;
+
+  function snowCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 7, y / 7, 9, 3);
+      var r = 218 + n * 34, g = 224 + n * 32, b = 236 + n * 24;
+      var ripple = Math.sin(y * 0.35 + Math.sin(x * 0.09) * 2.4);
+      if (ripple > 0.72) { r *= 0.94; g *= 0.945; b *= 0.97; }       // drift shadows
+      else if (ripple < -0.78) { r *= 1.05; g *= 1.05; b *= 1.03; }  // crest glints
+      var sp = hash2(x + 5, y + 33);
+      if (sp > 0.985) { r = 255; g = 255; b = 255; }                 // sparkles
+      return [r, g, b];
+    });
+  }
+  function logCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var log = Math.floor(y / 11);
+      var grain = vnoise(x / 26, (y + log * 29) / 3.0, 8, 2);
+      var tint = (hash2(log, 13) * 2 - 1) * 10;
+      var r = 118 + tint, g = 84 + tint * 0.8, b = 56 + tint * 0.6;
+      r *= 0.86 + grain * 0.28; g *= 0.86 + grain * 0.28; b *= 0.86 + grain * 0.28;
+      if (y % 11 < 1) { r = 40; g = 30; b = 22; }
+      var snowLine = vnoise(x / 10, log * 3 + 4, 4, 2);
+      if (snowLine > 0.74 && (y % 11) > 1 && (y % 11) < 4) { r = 225; g = 231; b = 240; }  // snow caught on logs
+      return [r, g, b];
+    });
+  }
+  function roofSnowCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 6, y / 9, 7, 2);
+      var snow = y < 34 || n > 0.55;
+      if (snow) { var s = 225 + n * 26; return [s, s + 4, s + 16]; }
+      var r = 58 + n * 20, g = 46 + n * 16, b = 42 + n * 14;         // dark shingle underside
+      if (y % 12 < 1) { r *= 0.6; g *= 0.6; b *= 0.6; }
+      return [r, g, b];
+    });
+  }
+  function pineCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 5, y / 5, 8, 2);
+      var snow = n > 0.62;
+      if (snow) return [222 + n * 26, 228 + n * 22, 240];
+      var r = 22 + n * 26, g = 44 + n * 44, b = 34 + n * 30;
+      var sp = hash2(x, y + 7);
+      if (sp < 0.15) { r *= 0.7; g *= 0.7; b *= 0.7; }
+      return [r, g, b];
+    });
+  }
+  function metalColdCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 9, y / 9, 6, 2);
+      var r = 88 + n * 26, g = 94 + n * 26, b = 106 + n * 28;
+      if (x % 22 < 1) { r *= 0.72; g *= 0.72; b *= 0.72; }
+      var rust = vnoise(x / 11 + 6, y / 11, 5, 2);
+      if (rust > 0.76) { var k = (rust - 0.76) * 2.4; r += (96 - r) * k; g += (56 - g) * k; b += (40 - b) * k; }
+      return [r, g, b];
+    });
+  }
+
+  var snowTex = texFrom(snowCanvas());
+  var logTex = texFrom(logCanvas());
+  var roofSnowTex = texFrom(roofSnowCanvas());
+  var pineTex = texFrom(pineCanvas());
+  var metalColdTex = texFrom(metalColdCanvas());
+
+  var matSnow = ps1Material(snowTex);
+  var matLog = ps1Material(logTex);
+  var matRoofSnow = ps1Material(roofSnowTex);
+  var matPine = ps1Material(pineTex);
+  var matMetalCold = ps1Material(metalColdTex);
+  var matWindowWarm = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 205, 120)));
+  var matLanternGlow = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 215, 140)));
+
+  var MOON = new THREE.Vector3(0.24, 0.62, -0.32).normalize();
+  var snow = { puffs: [] };   // particles created inside prop IIFEs register here
+  var snowRelight = function (x, y, z, nx, ny, nz) {
+    var ndl = Math.max(0, nx * MOON.x + ny * MOON.y + nz * MOON.z);
+    var hemi = 0.5 + 0.5 * ny;
+    var r = 0.50 * ndl + 0.44 + (0.62 - 0.44) * hemi;
+    var g = 0.56 * ndl + 0.48 + (0.66 - 0.48) * hemi;
+    var b = 0.68 * ndl + 0.56 + (0.76 - 0.56) * hemi;
+    return [Math.min(1.12, r), Math.min(1.12, g), Math.min(1.16, b)];
+  };
+
+  PS1.registerScene(function () {
+    setRelight(snowRelight);
+    var scene = new THREE.Scene();
+    var decals = PS1.newDecalSet();
+    var colliders = [];
+
+    var moon = new THREE.DirectionalLight(0xaabbdd, 1);
+    moon.position.copy(MOON).multiplyScalar(32);
+    moon.castShadow = true;
+    moon.shadow.mapSize.set(1024, 1024);
+    moon.shadow.camera.near = 2; moon.shadow.camera.far = 75;
+    moon.shadow.camera.left = -20; moon.shadow.camera.right = 20;
+    moon.shadow.camera.top = 20; moon.shadow.camera.bottom = -20;
+    moon.shadow.bias = -0.004; moon.shadow.normalBias = 0.05;
+    scene.add(moon); scene.add(moon.target);
+
+    scene.add(PS1.makeSky({
+      top: [0.30, 0.38, 0.50], horizon: [0.66, 0.71, 0.79], bottom: [0.55, 0.60, 0.68],
+      sunDir: MOON.toArray(), sunCol: [0, 0, 0], stars: 0, meteors: 0,
+      radius: 90
+    }));
+
+    scene.add(PS1.groundGrid(matSnow, 0, 0, 38, 32, 11, 1, 0, 1));
+    // distant ridge silhouettes (flat haze-tinted, same trick as the shrine)
+    setRelight(function (x, y, z) { var k = 0.85 + y * 0.010; return [0.42 * k, 0.45 * k, 0.50 * k]; });
+    [[-6, -44, 56, 13], [30, -30, 44, 10], [-38, 8, 40, 9], [8, 44, 52, 11]].forEach(function (m) {
+      var mx = m[0], mz = m[1], mw = m[2], mh = m[3];
+      scene.add(quadCorners(matSnow,
+        [mx - mw / 2, -2, mz], [mx + mw / 2, -2, mz], [mx + mw / 6, mh, mz + mw / 3], [mx - mw / 6, mh * 0.8, mz + mw / 3]));
+    });
+    setRelight(snowRelight);
+
+    // ---------------- main lodge --------------------------------------
+    (function () {
+      var lx = 0, lz = -7.5, H1 = 2.7, H2 = 2.4;
+      scene.add(cs(boxMesh(matLog, lx, H1 / 2, lz, 9.5, H1, 6.5, 1.0)));
+      scene.add(cs(boxMesh(matLog, lx, H1 + H2 / 2, lz, 10.2, H2, 7.0, 1.0)));      // overhung upper floor
+      // snow-roofed gables, ridge along x
+      var rh = 2.2, ry = H1 + H2;
+      scene.add(cs(quadCorners(matRoofSnow,
+        [lx - 5.9, ry, lz - 3.9], [lx + 5.9, ry, lz - 3.9],
+        [lx + 5.2, ry + rh, lz], [lx - 5.2, ry + rh, lz], 6, 3)));
+      scene.add(cs(quadCorners(matRoofSnow,
+        [lx - 5.9, ry, lz + 3.9], [lx + 5.9, ry, lz + 3.9],
+        [lx + 5.2, ry + rh, lz], [lx - 5.2, ry + rh, lz], 6, 3)));
+      // warm windows both floors
+      [-3.2, -1.1, 1.1, 3.2].forEach(function (wx) {
+        scene.add(boxMesh(matWindowWarm, lx + wx, 1.7, lz + 3.34, 1.1, 1.0, 0.06, 2, 0, [1.5, 1.05, 0.5]));
+      });
+      [[-2.6], [2.6]].forEach(function (wx) {
+        scene.add(boxMesh(matWindowWarm, lx + wx[0], H1 + 1.5, lz + 3.60, 1.2, 1.0, 0.06, 2, 0, [1.5, 1.05, 0.5]));
+      });
+      scene.add(boxMesh(matLog, lx, 1.05, lz + 3.28, 1.0, 2.0, 0.14, 2));          // door
+      // chimney + smoke
+      scene.add(cs(boxMesh(matMetalCold, lx + 3.0, ry + 1.5, lz - 0.8, 0.7, 2.2, 0.7, 1.4)));
+      var smoke = PS1.makeParticles({
+        mode: 'steam', count: 60, color: [0.62, 0.64, 0.68],
+        size: 0.09, speed: 0.6, sway: 0.25,
+        area: [lx + 2.5, lx + 3.5, lz - 1.3, lz - 0.3, 3.6]
+      });
+      scene.add(smoke);
+      snow.puffs.push(smoke);
+      // porch: posts + deck + lantern
+      [-4.2, -1.4, 1.4, 4.2].forEach(function (px) {
+        scene.add(cs(boxMesh(matLog, lx + px, 1.25, lz + 4.6, 0.16, 2.5, 0.16, 2)));
+      });
+      scene.add(boxMesh(matLog, lx, 0.18, lz + 4.6, 9.6, 0.36, 2.2, 1.2));
+      scene.add(boxMesh(matLanternGlow, lx - 4.9, 2.6, lz + 4.6, 0.16, 0.24, 0.16, 2, 0, [1.7, 1.3, 0.6]));
+      colliders.push({ x0: lx - 5.2, z0: lz - 3.6, x1: lx + 5.2, z1: lz + 5.8 });
+      // icicles under the eaves
+      for (var ic = 0; ic < 9; ic++) {
+        var ix = lx - 5.5 + ic * 1.38;
+        scene.add(prismMesh(matRoofSnow, 0, 0, 0.045, 0.3 + hash2(ic, 3) * 0.35, 4, 1, 0.5, null, 0)
+          .translateX(ix).translateY(ry - 0.15).translateZ(lz + 3.95));
+      }
+    })();
+
+    // ---------------- stable / barn -----------------------------------
+    (function () {
+      var bx = -11.5, bz = -2.5, H = 2.6;
+      scene.add(cs(boxMesh(matLog, bx, H / 2, bz, 5.5, H, 4.5, 1.0)));
+      scene.add(cs(quadCorners(matRoofSnow,
+        [bx - 3.3, H, bz - 2.7], [bx + 3.3, H, bz - 2.7],
+        [bx + 2.8, H + 1.6, bz], [bx - 2.8, H + 1.6, bz], 4, 2)));
+      scene.add(cs(quadCorners(matRoofSnow,
+        [bx - 3.3, H, bz + 2.7], [bx + 3.3, H, bz + 2.7],
+        [bx + 2.8, H + 1.6, bz], [bx - 2.8, H + 1.6, bz], 4, 2)));
+      scene.add(boxMesh(matLog, bx, 1.0, bz + 2.28, 1.4, 1.9, 0.12, 2));           // big door
+      scene.add(boxMesh(matWindowWarm, bx + 1.7, 1.9, bz + 2.34, 0.7, 0.6, 0.06, 2, 0, [1.4, 1.0, 0.5]));
+      colliders.push({ x0: bx - 2.9, z0: bz - 2.4, x1: bx + 2.9, z1: bz + 2.4 });
+      // hay poking from the loft
+      scene.add(blobMesh(ps1Material(PS1.solidTexture(206, 176, 86)), bx + 1.2, 2.7, bz + 2.0, 0.4, 0.7, 0.4, function () { return [1, 0.95, 0.8]; }));
+    })();
+
+    // ---------------- pines with snow caps ----------------------------
+    function pine(x, z, s) {
+      scene.add(cs(prismMesh(matLog, x, z, 0.16 * s, 1.2 * s, 6, 1.4, 1.6)));
+      for (var t = 0; t < 3; t++) {
+        var rr = (1.5 - t * 0.38) * s;
+        scene.add(cs(prismMesh(matPine, x, z, rr, 1.25 * s, 7, 2.6, 1.6, null, (1.0 + t * 0.95) * s)));
+      }
+      scene.add(prismMesh(matRoofSnow, x, z, 0.3 * s, 0.28 * s, 7, 1.4, 0.5, null, 3.95 * s));
+      colliders.push({ x0: x - 0.4, z0: z - 0.4, x1: x + 0.4, z1: z + 0.4 });
+      decals.oct(x, z, 1.5 * s, PS1.decalMaterial(0.72, 0.75, 0.8, 0.3), 0.006, Math.round(x + z));
+    }
+    pine(9.5, -8.5, 1.5); pine(13.5, -3.5, 1.2); pine(-14.5, 5.5, 1.35); pine(10.5, 4.5, 1.1); pine(-8.5, 6.5, 0.95); pine(14.5, 9.5, 1.45);
+
+    // ---------------- snowman -----------------------------------------
+    (function () {
+      var sx = 2.2, sz = 5.8;
+      var matSnowman = ps1Material(PS1.solidTexture(238, 242, 248));
+      scene.add(blobMesh(matSnowman, sx, 0.5, sz, 0.55, 0.95, 0.15, function () { return [1, 1, 1.02]; }));
+      scene.add(blobMesh(matSnowman, sx, 1.35, sz, 0.40, 1.0, 0.15, function () { return [1, 1, 1.02]; }));
+      scene.add(blobMesh(matSnowman, sx, 1.95, sz, 0.26, 1.0, 0.15, function () { return [1, 1, 1.02]; }));
+      scene.add(boxMesh(ps1Material(PS1.solidTexture(20, 18, 18)), sx, 2.02, sz + 0.24, 0.16, 0.06, 0.05, 2));   // coal eyes+mouth band
+      scene.add(boxMesh(ps1Material(PS1.solidTexture(226, 130, 40)), sx, 1.93, sz + 0.30, 0.05, 0.05, 0.22, 2)); // carrot
+      scene.add(boxMesh(matLog, sx + 0.55, 1.35, sz, 0.7, 0.07, 0.07, 2, 0.5));                                  // stick arms
+      scene.add(boxMesh(matLog, sx - 0.55, 1.45, sz, 0.7, 0.07, 0.07, 2, -0.4));
+      scene.add(prismMesh(matLog, sx, 2.3, sz, 0.16, 0.3, 6, 1.4, 0.6, null, 0));                                // bucket hat
+      colliders.push({ x0: sx - 0.6, z0: sz - 0.6, x1: sx + 0.6, z1: sz + 0.6 });
+    })();
+
+    // ---------------- props --------------------------------------------
+    // firewood stack
+    for (var w = 0; w < 8; w++) {
+      var log = prismMesh(matLog, 0, 0, 0.1, 1.1, 5, 0.7, 1.6, null, 0);
+      log.rotation.z = Math.PI / 2;
+      log.position.set(4.6, 0.11 + Math.floor(w / 4) * 0.21, -3.4 + (w % 4) * 0.23);
+      scene.add(log);
+    }
+    // sled
+    (function () {
+      var sx2 = -5.5, sz2 = 5.5;
+      scene.add(boxMesh(matLog, sx2, 0.28, sz2, 1.0, 0.1, 1.7, 1.4));
+      scene.add(boxMesh(matLog, sx2, 0.42, sz2 - 0.8, 0.9, 0.22, 0.12, 1.4, 0.5));
+      [[-0.4, -0.7], [0.4, -0.7], [-0.4, 0.7], [0.4, 0.7]].forEach(function (p) {
+        var runner = prismMesh(matMetalCold, 0, 0, 0.05, 1.8, 4, 1.2, 0.6, null, 0);
+        runner.rotation.x = Math.PI / 2;
+        runner.position.set(sx2 + p[0], 0.06, sz2 + p[1]);
+        scene.add(runner);
+      });
+      colliders.push({ x0: sx2 - 0.6, z0: sz2 - 1.0, x1: sx2 + 0.6, z1: sz2 + 1.0 });
+    })();
+    // fence with snow caps
+    (function () {
+      for (var fx = -4; fx <= 4; fx += 1.1) {
+        scene.add(cs(boxMesh(matLog, fx, 0.45, 11.5, 0.09, 0.9, 0.09, 2)));
+        scene.add(boxMesh(matRoofSnow, fx, 0.93, 11.5, 0.13, 0.07, 0.13, 2));
+      }
+      scene.add(boxMesh(matLog, 0, 0.62, 11.5, 8.4, 0.07, 0.06, 1.4));
+      scene.add(boxMesh(matLog, 0, 0.34, 11.5, 8.4, 0.07, 0.06, 1.4));
+    })();
+    // well
+    (function () {
+      scene.add(cs(prismMesh(matMetalCold, 6.5, -4.5, 0.55, 0.7, 8, 2.4, 0.9)));
+      scene.add(prismMesh(matRoofSnow, 6.5, -4.5, 0.75, 0.12, 8, 2.4, 0.4, null, 0.7));
+      colliders.push({ x0: 5.9, z0: -5.1, x1: 7.1, z1: -3.9 });
+    })();
+    // lantern posts along the path with warm pools
+    [[-3.2, 8.5], [3.2, 4.0]].forEach(function (p) {
+      scene.add(cs(prismMesh(matMetalCold, p[0], p[1], 0.07, 2.3, 6, 1.4, 3)));
+      scene.add(boxMesh(matLanternGlow, p[0], 2.25, p[1], 0.18, 0.22, 0.18, 2, 0, [1.7, 1.3, 0.6]));
+      decals.oct(p[0], p[1], 1.3, PS1.decalMaterial(0.5, 0.38, 0.2, 0.4), 0.005, Math.round(p[0] * 3 + p[1]));
+    });
+    // trampled path decal to the lodge
+    decals.path([[-1.0, 13.5], [-0.6, 10.5], [-0.2, 7.0], [0.1, 3.5], [0.2, 0.5]],
+      0.8, 1.1, PS1.decalMaterial(0.62, 0.62, 0.66, 0.55), 0.006);
+    // snow drifts against walls
+    [[-5.0, -4.2], [5.0, -4.0], [-11.5, 0.4], [-9.2, 6.5], [8.5, 6.0]].forEach(function (d) {
+      scene.add(blobMesh(matSnow, d[0], 0.22, d[1], 0.85 + hash2(Math.round(d[0]), 3) * 0.5, 0.45, 0.35,
+        function (sd) { return sd > 0.5 ? [1.02, 1.02, 1.03] : [0.98, 0.99, 1.0]; }));
+    });
+
+
+    // ---------------- v8 detail pass ------------------------------------
+    // doghouse with a snow cap + name plate
+    (function () {
+      var dx = 4.0, dz = 9.6;
+      scene.add(cs(boxMesh(matLog, dx, 0.4, dz, 1.0, 0.8, 1.2, 1.2)));
+      scene.add(cs(quadCorners(matRoofSnow, [dx - 0.65, 0.82, dz - 0.75], [dx + 0.65, 0.82, dz - 0.75],
+        [dx + 0.5, 1.25, dz], [dx - 0.5, 1.25, dz], 2, 1.4)));
+      scene.add(cs(quadCorners(matRoofSnow, [dx - 0.65, 0.82, dz + 0.75], [dx + 0.65, 0.82, dz + 0.75],
+        [dx + 0.5, 1.25, dz], [dx - 0.5, 1.25, dz], 2, 1.4)));
+      scene.add(boxMesh(ps1Material(PS1.solidTexture(20, 18, 18)), dx, 0.38, dz - 0.62, 0.4, 0.5, 0.06, 2));
+      colliders.push({ x0: dx - 0.7, z0: dz - 0.8, x1: dx + 0.7, z1: dz + 0.8 });
+    })();
+    // axe stump + axe + more firewood under the porch
+    scene.add(prismMesh(matLog, -3.2, 4.2, 0.26, 0.4, 7, 1.4, 0.6, null, 0));
+    scene.add(boxMesh(matMetalCold, -3.05, 0.62, 4.14, 0.06, 0.4, 0.03, 2, 0.5));
+    scene.add(boxMesh(matLog, -3.05, 0.78, 4.14, 0.24, 0.05, 0.05, 2, 0.5));
+    for (var fw = 0; fw < 5; fw++) {
+      var log2 = prismMesh(matLog, 0, 0, 0.09, 1.2, 5, 0.7, 1.6, null, 0);
+      log2.rotation.z = Math.PI / 2;
+      log2.position.set(-2.2 + (fw % 3) * 0.24, 0.55 + Math.floor(fw / 3) * 0.2, 4.4);
+      scene.add(log2);
+    }
+    // clothesline with frozen coats
+    (function () {
+      var cxx = -7.5, czz = 7.5;
+      scene.add(cs(boxMesh(matMetalCold, cxx, 1.0, czz, 0.06, 2.0, 0.06, 2)));
+      scene.add(cs(boxMesh(matMetalCold, cxx + 2.6, 1.0, czz, 0.06, 2.0, 0.06, 2)));
+      scene.add(boxMesh(matMetalCold, cxx + 1.3, 1.85, czz, 2.7, 0.03, 0.03, 3));
+      [[0.2, 0.42, 0.5], [0.9, 0.36, 0.44], [1.7, 0.46, 0.4], [2.3, 0.4, 0.46]].forEach(function (c) {
+        var matCoat = ps1Material(PS1.solidTexture(96 + hash2(Math.round(c[0] * 9), 3) * 80, 84, 74));
+        scene.add(boxMesh(matCoat, cxx + c[0], 1.85 - c[1] / 2 - 0.02, czz, c[2] * 0.8, c[1], 0.08, 1.6));
+      });
+    })();
+    // snow-piled crates + barrel by the stable
+    scene.add(cs(boxMesh(matLog, -13.8, 0.28, 0.8, 0.62, 0.56, 0.62, 1.2, 0.2)));
+    scene.add(boxMesh(matRoofSnow, -13.8, 0.6, 0.8, 0.68, 0.1, 0.68, 2));
+    scene.add(prismMesh(matMetalCold, -13.0, 0.6, 0.44, 0.9, 8, 1.8, 1));
+    scene.add(prismMesh(matRoofSnow, -13.0, 0.44, 0.47, 0.12, 8, 1.8, 0.4, null, 0.44));
+    // ski poles + sled skis leaning by the door
+    [[-4.35, 0.12], [-4.05, 0.10]].forEach(function (sk) {
+      scene.add(boxMesh(matMetalCold, sk[0], 1.0, 4.72, 0.04, 2.0, 0.04, 2, sk[1]));   // leaning on the porch posts
+    });
+    // frozen footprint trail to the well
+    var matPrint = PS1.decalMaterial(0.50, 0.52, 0.56, 0.5);
+    for (var fp = 0; fp < 9; fp++) {
+      decals.rect(5.2 + fp * 0.16 + (fp % 2) * 0.14, -1.4 - fp * 0.36, 0.22, 0.34, matPrint, 0.008);
+    }
+    // guide signpost near the path start
+    (function () {
+      scene.add(cs(boxMesh(matLog, -4.6, 0.8, 9.8, 0.08, 1.6, 0.08, 2)));
+      scene.add(boxMesh(matLog, -4.52, 1.3, 9.8, 0.05, 0.2, 0.55, 2));
+      scene.add(boxMesh(matLog, -4.52, 1.02, 9.8, 0.05, 0.2, 0.4, 2, 0.1));
+    })();
+    // hay trough inside the stable + bale
+    scene.add(boxMesh(matLog, -11.5, 0.3, -0.6, 1.4, 0.3, 0.5, 1.4));
+    scene.add(blobMesh(ps1Material(PS1.solidTexture(200, 172, 90)), -11.5, 0.5, -0.6, 0.3, 0.6, 0.3, function () { return [1, 0.96, 0.85]; }));
+    // extra lantern post + warm pool at the stable
+    scene.add(cs(prismMesh(matMetalCold, -11.5, 3.4, 0.07, 2.3, 6, 1.4, 3)));
+    scene.add(boxMesh(matLanternGlow, -11.5, 2.25, 3.4, 0.18, 0.22, 0.18, 2, 0, [1.7, 1.3, 0.6]));
+    decals.oct(-11.5, 3.4, 1.4, PS1.decalMaterial(0.5, 0.38, 0.2, 0.4), 0.005, 77);
+    // icicles hanging down from the stable eave
+    for (var iv = 0; iv < 5; iv++) {
+      var ic2 = prismMesh(matRoofSnow, 0, 0, 0.04, 0.24 + hash2(iv, 9) * 0.3, 4, 1, 0.5, null, 0);
+      ic2.rotation.x = Math.PI;   // point downward
+      ic2.position.set(-13.6 + iv * 1.05, 2.62, 0.22);
+      scene.add(ic2);
+    }
+
+    // falling snow
+    var snowfall = PS1.makeParticles({
+      mode: 'petal', count: 340, color: [0.93, 0.95, 1.0],
+      size: 0.022, speed: 0.9, sway: 0.4,
+      area: [-15, 15, -13, 14, 9]
+    });
+    scene.add(snowfall);
+
+    return {
+      name: '雪岭驿站',
+      scene: scene,
+      colliders: colliders,
+      bounds: { x0: -13.5, x1: 13.5, z0: -11.5, z1: 13.0 },
+      spawn: [-2.5, 13.5, Math.atan2(-(-0.2 - -2.5), -(-6.0 - 13.5)), 0.0],
+      idle: { pos: [-2.5, 1.62, 13.5], target: [-0.2, 1.8, -6.0] },
+      fog: { color: [0.62, 0.66, 0.72], near: 20, far: 55 },
+      noFlicker: true,
+      blobGroup: decals.blobGroup,
+      particles: [snowfall].concat(snow.puffs),
+      update: function (t) {
+        var warm = 0.9 + 0.08 * Math.sin(t * 10.7) + 0.04 * Math.sin(t * 27.1);
+        matWindowWarm.uniforms.uFlicker.value = warm;
+        matLanternGlow.uniforms.uFlicker.value = warm;
+      }
+    };
+  });
+
+})();
+
+;
+(function () {
+  'use strict';
+  // ======================= 大漠驿站（正午硬光） ========================
+  var texFrom = PS1.texFrom, pixelLoop = PS1.pixelLoop, newCanvas = PS1.newCanvas;
+  var hash2 = PS1.hash2, vnoise = PS1.vnoise;
+  var boxMesh = PS1.boxMesh, prismMesh = PS1.prismMesh, quadMesh = PS1.quadMesh;
+  var quadCorners = PS1.quadCorners, blobMesh = PS1.blobMesh;
+  var cs = PS1.cs, setRelight = PS1.setRelight;
+  var ps1Material = PS1.ps1Material;
+
+  function sandCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 8, y / 8, 9, 3);
+      var rip = Math.sin((y + Math.sin(x * 0.16) * 7) * 0.42);
+      var r = 216 + n * 30 + rip * 7, g = 182 + n * 26 + rip * 6, b = 134 + n * 22 + rip * 5;
+      var sp = hash2(x + 11, y + 4);
+      if (sp > 0.99) { r = 250; g = 236; b = 200; }               // quartz glints
+      else if (sp < 0.02) { r *= 0.8; g *= 0.78; b *= 0.74; }      // pebbles
+      return [r, g, b];
+    });
+  }
+  function sandstoneCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var band = Math.floor(y / 13);
+      var n = vnoise(x / 7, y / 7, 7, 2);
+      var base = 158 + band * 6 % 30;
+      var r = base * 1.06 + n * 24, g = base * 0.78 + n * 18, b = base * 0.58 + n * 14;
+      if (y % 13 < 1) { r *= 0.7; g *= 0.68; b *= 0.62; }
+      var sp = hash2(x + 21, y + 9);
+      if (sp < 0.06) { r *= 0.82; g *= 0.82; b *= 0.8; }
+      return [r, g, b];
+    });
+  }
+  function tentCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var stripe = Math.floor((x + Math.floor(y / 64) * 0) / 11) % 2 === 0;
+      var n = vnoise(x / 9, y / 9, 6, 2);
+      var r, g, b;
+      if (stripe) { r = 205 + n * 26; g = 172 + n * 22; b = 116 + n * 18; }
+      else { r = 146 + n * 24; g = 74 + n * 16; b = 52 + n * 12; }
+      var worn = vnoise(x / 14 + 3, y / 14, 4, 2);
+      if (worn > 0.72) { var k = (worn - 0.72) * 1.4; r *= 1 - k * 0.35; g *= 1 - k * 0.35; b *= 1 - k * 0.3; }
+      return [r, g, b];
+    });
+  }
+  function palmTrunkCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var seg = Math.floor(y / 9);
+      var n = vnoise(x / 5, y / 6, 7, 2);
+      var r = 122 + n * 26, g = 92 + n * 20, b = 58 + n * 14;
+      if (y % 9 < 1) { r *= 0.6; g *= 0.58; b *= 0.52; }
+      var tint = (hash2(seg, 7) * 2 - 1) * 8;
+      return [r + tint, g + tint * 0.8, b + tint * 0.6];
+    });
+  }
+  function frondCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 4, y / 6, 8, 2);
+      var r = 40 + n * 40, g = 92 + n * 66, b = 36 + n * 30;
+      if (y % 7 < 1) { r *= 0.6; g *= 0.62; b *= 0.6; }
+      return [r, g, b];
+    });
+  }
+  function carpetCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var diamond = (Math.abs(((x + y) % 32) - 16) + Math.abs(((x - y + 64) % 32) - 16)) < 9;
+      var border = (x < 6 || x > 57 || y < 6 || y > 57);
+      if (border) return [148, 44, 40];
+      if (diamond) return [196, 158, 62];
+      return [42, 58, 96];
+    });
+  }
+
+  var sandTex = texFrom(sandCanvas());
+  var sandstoneTex = texFrom(sandstoneCanvas());
+  var tentTex = texFrom(tentCanvas());
+  var palmTrunkTex = texFrom(palmTrunkCanvas());
+  var frondTex = texFrom(frondCanvas());
+  var carpetTex = texFrom(carpetCanvas());
+
+  var matSand = ps1Material(sandTex);
+  var matStone = ps1Material(sandstoneTex);
+  var matTent = ps1Material(tentTex);
+  var matPalm = ps1Material(palmTrunkTex);
+  var matFrond = ps1Material(frondTex);
+  var matCarpet = ps1Material(carpetTex);
+
+  var SUN = new THREE.Vector3(0.12, 0.95, 0.18).normalize();   // near-zenith: short hard shadows
+  var SUN_COL = [1.38, 1.22, 0.94];
+  var SKY_AMB = [0.38, 0.40, 0.44];
+  var GND_AMB = [0.52, 0.44, 0.33];                             // sand bounce is warm
+  var desertRelight = function (x, y, z, nx, ny, nz) {
+    var ndl = Math.max(0, nx * SUN.x + ny * SUN.y + nz * SUN.z);
+    var hemi = 0.5 + 0.5 * ny;
+    var r = SUN_COL[0] * ndl * 0.92 + GND_AMB[0] + (SKY_AMB[0] - GND_AMB[0]) * hemi;
+    var g = SUN_COL[1] * ndl * 0.92 + GND_AMB[1] + (SKY_AMB[1] - GND_AMB[1]) * hemi;
+    var b = SUN_COL[2] * ndl * 0.92 + GND_AMB[2] + (SKY_AMB[2] - GND_AMB[2]) * hemi;
+    return [Math.min(1.25, r), Math.min(1.2, g), Math.min(1.1, b)];
+  };
+
+  PS1.registerScene(function () {
+    setRelight(desertRelight);
+    var scene = new THREE.Scene();
+    var decals = PS1.newDecalSet();
+    var colliders = [];
+
+    var sun = new THREE.DirectionalLight(0xfff2d0, 1);
+    sun.position.copy(SUN).multiplyScalar(34);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.camera.near = 2; sun.shadow.camera.far = 75;
+    sun.shadow.camera.left = -21; sun.shadow.camera.right = 21;
+    sun.shadow.camera.top = 21; sun.shadow.camera.bottom = -21;
+    sun.shadow.bias = -0.004; sun.shadow.normalBias = 0.05;
+    scene.add(sun); scene.add(sun.target);
+
+    scene.add(PS1.makeSky({
+      top: [0.22, 0.44, 0.76], horizon: [0.82, 0.74, 0.55], bottom: [0.66, 0.56, 0.42],
+      sunDir: SUN.toArray(), sunCol: [1.4, 1.35, 1.1], sunCut: 0.9993, sunGlow: 0.22,
+      stars: 0, meteors: 0, radius: 90
+    }));
+
+    scene.add(PS1.groundGrid(matSand, 0, 0, 40, 34, 12, 1, 0, 1));
+
+    // ---------------- sandstone mesas (backdrop) -----------------------
+    function mesa(x, z, w, h) {
+      for (var lv = 0; lv < 3; lv++) {
+        var s = 1 - lv * 0.26;
+        scene.add(cs(boxMesh(matStone, x, h * (0.22 + lv * 0.3), z, w * s, h * 0.34, w * 0.7 * s, 0.9)));
+      }
+      scene.add(cs(boxMesh(matStone, x, h * 1.06, z, w * 0.38, h * 0.14, w * 0.26, 0.9)));  // cap rock
+    }
+    mesa(-22, -18, 9, 7.5); mesa(24, -14, 7, 5.5); mesa(-26, 10, 6, 4.5); mesa(20, 16, 8, 6);
+
+    // ---------------- oasis pool + reeds -------------------------------
+    (function () {
+      var ox = -8.5, oz = 2.0;
+      scene.add(PS1.groundGrid(ps1Material(texFrom(pixelLoop(newCanvas(64), function (x, y) {
+        var w1 = Math.sin((x + Math.sin(y * 0.3) * 5) * 0.4) + Math.sin((y + Math.sin(x * 0.24) * 6) * 0.3 + 1.8);
+        var k = 0.8 + 0.12 * w1;
+        var r = 36 * k, g = 92 * k, b = 86 * k;
+        if (w1 > 1.6) { r += 60; g += 90; b += 82; }
+        return [r, g, b];
+      }))), ox, oz, 4.4, 3.4, 2, 0.8, 0.06, 1));
+      [[-2.4, -1.5], [-2.6, 0.6], [-2.2, 1.4], [2.5, -1.2], [2.3, 1.0]].forEach(function (rr) {
+        for (var rd = 0; rd < 4; rd++) {
+          scene.add(boxMesh(matFrond, ox + rr[0] + (rd % 2) * 0.1, 0.55, oz + rr[1], 0.05, 1.1, 0.05, 3, (rd - 1.5) * 0.14));
+        }
+      });
+      colliders.push({ x0: ox - 2.4, z0: oz - 1.8, x1: ox + 2.4, z1: oz + 1.8 });
+    })();
+
+    // ---------------- palm trees --------------------------------------
+    function palm(x, z, s, lean) {
+      var segs = 3;
+      for (var sg = 0; sg < segs; sg++) {
+        var hh = 1.5 * s;
+        var px = x + lean * sg * 0.5 * s, py = 0.15 + sg * hh, pz = z;
+        var trunk = prismMesh(matPalm, 0, 0, 0.15 * s, hh, 6, 1.4, 2, null, 0);
+        trunk.position.set(px, py, pz);
+        trunk.rotation.z = lean * 0.24;
+        scene.add(cs(trunk));
+      }
+      var topX = x + lean * segs * 0.5 * s, topY = 0.15 + segs * 1.5 * s;
+      for (var f = 0; f < 7; f++) {
+        var holder = boxMesh(matFrond, 0.85 * s, 0, 0, 1.7 * s, 0.05, 0.34 * s, 1.4, 0.28);  // geometry at origin
+        holder.position.set(topX, topY + 0.1, z);
+        holder.rotation.y = f / 7 * Math.PI * 2;
+        holder.rotation.z = 0.28;
+        scene.add(cs(holder));
+      }
+      // coconuts
+      [[0.14, 0], [-0.1, 0.12], [-0.06, -0.14]].forEach(function (c) {
+        scene.add(blobMesh(ps1Material(PS1.solidTexture(96, 74, 48)), topX + c[0], topY - 0.08, z + c[1], 0.11, 1.0, 0.2, function () { return [1, 0.9, 0.8]; }));
+      });
+      colliders.push({ x0: x - 0.3, z0: z - 0.3, x1: x + 0.3, z1: z + 0.3 });
+    }
+    palm(-5.4, 5.6, 1.0, 0.22); palm(-10.6, 0.2, 0.9, -0.3); palm(-10.4, -2.2, 1.05, 0.1); palm(6.8, -6.2, 0.95, -0.2);
+
+    // ---------------- bedouin camp ------------------------------------
+    function bigTent(x, z, rot) {
+      // ridge tent: two sloped canvas sides + back wall, striped fabric
+      var g = new THREE.Group();
+      g.add(cs(quadCorners(matTent,
+        [x - 2.6, 0, z], [x + 2.6, 0, z], [x + 2.6, 2.4, z - 2.2], [x - 2.6, 2.4, z - 2.2], 3, 2)));
+      g.add(cs(quadCorners(matTent,
+        [x - 2.6, 0, z - 4.4], [x + 2.6, 0, z - 4.4], [x + 2.6, 2.4, z - 2.2], [x - 2.6, 2.4, z - 2.2], 3, 2)));
+      // poles + ridge
+      g.add(cs(boxMesh(matPalm, x - 2.2, 1.2, z - 2.2, 0.1, 2.4, 0.1, 2)));
+      g.add(cs(boxMesh(matPalm, x + 2.2, 1.2, z - 2.2, 0.1, 2.4, 0.1, 2)));
+      g.add(boxMesh(matPalm, x, 2.42, z - 2.2, 4.9, 0.09, 0.09, 2));
+      scene.add(g);
+      void rot;
+      colliders.push({ x0: x - 2.7, z0: z - 4.5, x1: x + 2.7, z1: z + 0.1 });
+    }
+    bigTent(0.5, -5.5, 0);
+    // small shade awning on poles + carpet + cushions
+    (function () {
+      var ax = 3.5, az = 1.5;
+      [[-1.6, -1.1], [1.6, -1.1], [-1.6, 1.1], [1.6, 1.1]].forEach(function (p) {
+        scene.add(cs(boxMesh(matPalm, ax + p[0], 1.05, az + p[1], 0.09, 2.1, 0.09, 2)));
+      });
+      scene.add(cs(quadCorners(matTent, [ax - 2.0, 2.12, az - 1.3], [ax + 2.0, 2.12, az - 1.3],
+        [ax + 2.0, 1.98, az + 1.3], [ax - 2.0, 1.98, az + 1.3], 4, 2)));
+      var rug = PS1.quadMesh(matCarpet, 0, 0, 0, 0, 1, 0, 3.0, 2.0, 1, 1);
+      rug.rotation.x = -Math.PI / 2;
+      rug.position.set(ax, 0.02, az);
+      scene.add(rug);
+      [[-0.8, 0], [0.1, 0.4], [0.9, -0.2]].forEach(function (c) {
+        scene.add(blobMesh(matCarpet, ax + c[0], 0.14, az + c[1], 0.26, 0.55, 0.25, function (sd) { return sd > 0.5 ? [1.1, 0.9, 0.5] : [0.5, 0.35, 0.55]; }));
+      });
+      colliders.push({ x0: ax - 1.8, z0: az - 1.3, x1: ax + 1.8, z1: az + 1.3 });
+    })();
+    // low table with brass pot + cups
+    (function () {
+      var tx = 3.5, tz = 0.2;
+      scene.add(boxMesh(matPalm, tx, 0.24, tz, 1.1, 0.08, 0.7, 1.4));
+      var matBrass = ps1Material(PS1.solidTexture(196, 150, 66));
+      scene.add(prismMesh(matBrass, tx, tz, 0.14, 0.26, 8, 1.8, 0.6, null, 0.28));
+      scene.add(prismMesh(matBrass, tx - 0.35, tz + 0.1, 0.06, 0.1, 6, 1.4, 0.4, null, 0.28));
+      scene.add(prismMesh(matBrass, tx + 0.35, tz + 0.1, 0.06, 0.1, 6, 1.4, 0.4, null, 0.28));
+    })();
+
+    // ---------------- camels ------------------------------------------
+    function camel(x, z, resting) {
+      var matCamel = ps1Material(PS1.solidTexture(196, 158, 106));
+      var bodyY = resting ? 0.62 : 1.05;
+      scene.add(blobMesh(matCamel, x, bodyY, z, 0.62, 0.75, 0.2, function (sd) { return [1, 0.95, 0.85]; }));
+      scene.add(blobMesh(matCamel, x - 0.22, bodyY + 0.42, z, 0.26, 1.0, 0.25, function () { return [0.98, 0.9, 0.8]; }));
+      scene.add(blobMesh(matCamel, x + 0.25, bodyY + 0.4, z, 0.26, 1.0, 0.25, function () { return [0.98, 0.9, 0.8]; }));
+      // neck + head
+      scene.add(boxMesh(matCamel, x + 0.72, bodyY + 0.5, z, 0.18, 0.9, 0.22, 2, 0.35));
+      scene.add(boxMesh(matCamel, x + 1.02, bodyY + 0.92, z, 0.34, 0.22, 0.2, 2));
+      var legH = resting ? 0.28 : 0.72;
+      [[-0.38, -0.2], [0.42, -0.2], [-0.38, 0.2], [0.42, 0.2]].forEach(function (l) {
+        scene.add(boxMesh(matCamel, x + l[0], legH / 2 + (resting ? 0.02 : 0.08), z + l[1], 0.13, legH, 0.13, 1.4, resting ? (l[0] < 0 ? 1.35 : -1.35) * 0.35 : 0));
+      });
+      colliders.push({ x0: x - 0.9, z0: z - 0.45, x1: x + 1.2, z1: z + 0.45 });
+    }
+    camel(-3.6, 3.6, true); camel(5.8, 3.4, false);
+
+    // ---------------- caravan goods ------------------------------------
+    // amphorae
+    [[-1.6, -8.6], [-1.1, -8.9], [-1.4, -8.2]].forEach(function (a) {
+      var matClay = ps1Material(PS1.solidTexture(178, 96, 58));
+      scene.add(prismMesh(matClay, a[0], a[1], 0.22, 0.62, 8, 2, 0.9));
+      scene.add(prismMesh(matClay, a[0], a[1], 0.10, 0.14, 6, 1.2, 0.4, null, 0.62));
+    });
+    // rolled carpets
+    for (var rc = 0; rc < 3; rc++) {
+      var roll = prismMesh(matCarpet, 0, 0, 0.14, 1.5, 6, 1.4, 2, null, 0);
+      roll.rotation.z = Math.PI / 2;
+      roll.position.set(1.8, 0.15 + rc * 0.3, -8.4);
+      scene.add(roll);
+    }
+    // sacks + fire pit with kettle
+    [[2.6, -8.8], [3.1, -8.5]].forEach(function (sb) {
+      scene.add(blobMesh(ps1Material(PS1.solidTexture(196, 172, 130)), sb[0], 0.26, sb[1], 0.3, 1.0, 0.25, function () { return [1, 0.96, 0.9]; }));
+    });
+    (function () {
+      var fx = 6.0, fz = -3.4;
+      for (var st = 0; st < 7; st++) {
+        var a = st / 7 * Math.PI * 2;
+        scene.add(boxMesh(matStone, fx + Math.cos(a) * 0.5, 0.08, fz + Math.sin(a) * 0.5, 0.22, 0.16, 0.18, 1.2, a));
+      }
+      scene.add(prismMesh(ps1Material(PS1.solidTexture(40, 34, 30)), fx, fz, 0.24, 0.16, 6, 1.6, 0.4, null, 0.02));
+      var matKettle = ps1Material(PS1.solidTexture(60, 58, 56));
+      scene.add(prismMesh(matKettle, fx, fz, 0.16, 0.22, 7, 1.6, 0.5, null, 0.2));
+    })();
+    // dry shrubs
+    [[11.5, 2.5], [-13.5, -6.5], [13.0, 8.5], [-4.5, 9.5]].forEach(function (sh) {
+      scene.add(blobMesh(ps1Material(PS1.solidTexture(158, 132, 74)), sh[0], 0.24, sh[1], 0.34, 0.7, 0.5, function (sd) { return [1, 0.92, 0.75]; }));
+    });
+    // trampled campground
+    decals.oct(0.5, -3.0, 4.6, PS1.decalMaterial(0.66, 0.52, 0.36, 0.5), 0.006, 50);
+
+
+    // ---------------- v8 detail pass ------------------------------------
+    // caravan cart loaded with wares
+    (function () {
+      var cx2 = -4.5, cz2 = -6.5;
+      scene.add(cs(boxMesh(matPalm, cx2, 0.55, cz2, 1.5, 0.14, 2.4, 1.5)));
+      [[-0.62, -0.95], [0.62, -0.95], [-0.62, 0.95], [0.62, 0.95]].forEach(function (w2) {
+        scene.add(boxMesh(matPalm, cx2 + w2[0], 0.28, cz2 + w2[1], 0.09, 0.55, 0.09, 2));
+      });
+      var wheel3 = prismMesh(matPalm, 0, 0, 0.5, 0.1, 8, 2.2, 0.5, null, 0);
+      wheel3.rotation.z = Math.PI / 2;
+      wheel3.position.set(cx2 - 0.85, 0.5, cz2);
+      scene.add(cs(wheel3));
+      var wheel4 = prismMesh(matPalm, 0, 0, 0.5, 0.1, 8, 2.2, 0.5, null, 0);
+      wheel4.rotation.z = Math.PI / 2;
+      wheel4.position.set(cx2 + 0.85, 0.5, cz2);
+      scene.add(cs(wheel4));
+      scene.add(prismMesh(matCarpet, cx2 - 0.3, 0.72, cz2, 0.3, 6, 1.6, 0.6, null, 0));       // rolled cargo
+      scene.add(blobMesh(ps1Material(PS1.solidTexture(196, 172, 130)), cx2 + 0.35, 0.72, cz2, 0.28, 0.8, 0.3, function () { return [1, 0.96, 0.9]; }));
+      colliders.push({ x0: cx2 - 1.0, z0: cz2 - 1.35, x1: cx2 + 1.0, z1: cz2 + 1.35 });
+    })();
+    // flat spice display blanket + cone piles
+    (function () {
+      var sx = 1.6, sz = -7.6;
+      var rug2 = PS1.quadMesh(matTent, 0, 0, 0, 0, 1, 0, 1.9, 1.3, 1, 1);
+      rug2.rotation.x = -Math.PI / 2;
+      rug2.position.set(sx, 0.015, sz);
+      scene.add(rug2);
+      var cols3 = [[188, 72, 40], [90, 120, 60], [200, 160, 60], [130, 60, 110]];
+      [[-0.5, -0.25], [-0.1, 0.2], [0.35, -0.2], [0.6, 0.3]].forEach(function (sp, i3) {
+        var m = ps1Material(PS1.solidTexture(cols3[i3][0], cols3[i3][1], cols3[i3][2]));
+        var pile = prismMesh(m, 0, 0, 0.16, 0.24, 7, 1.4, 0.5, null, 0);
+        pile.position.set(sx + sp[0], 0.015, sz + sp[1]);
+        scene.add(pile);
+      });
+    })();
+    // goats tethered by the oasis
+    function goat(x, z) {
+      var matGoat = ps1Material(PS1.solidTexture(168, 150, 122));
+      scene.add(blobMesh(matGoat, x, 0.36, z, 0.26, 0.85, 0.25, function () { return [1, 0.97, 0.9]; }));
+      scene.add(boxMesh(matGoat, x + 0.3, 0.5, z, 0.2, 0.18, 0.16, 2));
+      [[-0.16, -0.1], [0.2, -0.1], [-0.16, 0.1], [0.2, 0.1]].forEach(function (l) {
+        scene.add(boxMesh(matGoat, x + l[0], 0.14, z + l[1], 0.05, 0.28, 0.05, 2));
+      });
+    }
+    goat(-4.6, 5.2); goat(-5.6, 5.8);
+    // flat-bread pile + teapot set on a low tray
+    (function () {
+      var matBread2 = ps1Material(PS1.solidTexture(216, 178, 110));
+      [[0, 0], [0.16, 0.1], [-0.15, 0.08]].forEach(function (b, i4) {
+        var flat = prismMesh(matBread2, 0, 0, 0.13, 0.05, 8, 1.6, 0.3, null, 0);
+        flat.position.set(4.15 + b[0], 0.29 + i4 * 0.05, -7.9 + b[1]);
+        scene.add(flat);
+      });
+      var matBrass2 = ps1Material(PS1.solidTexture(200, 154, 70));
+      scene.add(prismMesh(matBrass2, 4.7, -7.4, 0.09, 0.2, 7, 1.5, 0.5, null, 0.26));
+      scene.add(prismMesh(matBrass2, 4.45, -7.5, 0.05, 0.09, 6, 1.3, 0.4, null, 0.26));
+    })();
+    // woven baskets
+    [[-1.9, -6.6], [-2.5, -6.2], [7.6, -7.4]].forEach(function (bk) {
+      scene.add(prismMesh(matCarpet, bk[0], bk[1], 0.24, 0.3, 7, 1.8, 0.6, null, 0));
+    });
+    // water skins hanging on a rack
+    (function () {
+      var rx = 6.8, rz = -6.6;
+      scene.add(cs(boxMesh(matPalm, rx, 0.8, rz, 0.08, 1.6, 0.08, 2)));
+      scene.add(boxMesh(matPalm, rx, 1.5, rz, 1.1, 0.08, 0.08, 2));
+      [[-0.35, 0], [0.25, 0]].forEach(function (h2) {
+        scene.add(blobMesh(ps1Material(PS1.solidTexture(122, 92, 62)), rx + h2[0], 1.2, rz, 0.13, 1.2, 0.25, function () { return [1, 0.9, 0.75]; }));
+      });
+    })();
+    // falcon perch
+    (function () {
+      var px2 = 8.6, pz2 = 4.8;
+      scene.add(cs(boxMesh(matPalm, px2, 0.6, pz2, 0.08, 1.2, 0.08, 2)));
+      scene.add(boxMesh(matPalm, px2, 1.24, pz2, 0.09, 0.09, 0.4, 2));
+      var matFalcon = ps1Material(PS1.solidTexture(110, 90, 70));
+      scene.add(blobMesh(matFalcon, px2, 1.36, pz2 - 0.1, 0.07, 1.0, 0.2, function () { return [1, 0.95, 0.85]; }));
+      scene.add(boxMesh(matFalcon, px2, 1.38, pz2 - 0.17, 0.05, 0.045, 0.08, 2));
+    })();
+    // saddle rack by the tents + waterskin on sand
+    scene.add(boxMesh(matPalm, -0.5, 0.5, -8.6, 0.9, 0.1, 0.35, 1.4, 0.2));
+    scene.add(boxMesh(matPalm, -0.5, 0.25, -8.7, 0.5, 0.5, 0.08, 1.4));
+    scene.add(blobMesh(ps1Material(PS1.solidTexture(122, 92, 62)), 2.9, 0.1, -6.7, 0.16, 0.5, 0.3, function () { return [0.95, 0.85, 0.7]; }));
+    // small dunes (half-buried sand blobs) breaking the flat foreground
+    [[-3.0, 9.0], [4.5, 8.0], [8.5, 1.5], [-8.0, -7.5]].forEach(function (d2, i5) {
+      scene.add(blobMesh(matSand, d2[0], 0.1 + hash2(i5, 4) * 0.08, d2[1], 1.1 + hash2(i5, 8) * 0.6, 0.42, 0.4, function (sd) { return sd > 0.55 ? [1.04, 1.02, 1.0] : [1.0, 0.99, 0.97]; }));
+    });
+
+    // heat dust
+    var dust = PS1.makeParticles({
+      mode: 'dust', count: 140, color: [1.0, 0.95, 0.75],
+      size: 0.026, speed: 1, sway: 0.5,
+      area: [-13, 13, -11, 11, 2.2]
+    });
+    scene.add(dust);
+
+    return {
+      name: '大漠驿站',
+      scene: scene,
+      colliders: colliders,
+      bounds: { x0: -14.5, x1: 14.5, z0: -12.0, z1: 12.5 },
+      spawn: [10.5, 10.2, Math.atan2(-(-2.5 - 10.5), -(-3.0 - 10.2)), 0.02],
+      idle: { pos: [10.5, 1.62, 10.2], target: [-2.5, 1.7, -3.0] },
+      fog: { color: [0.80, 0.72, 0.56], near: 30, far: 70 },
+      noFlicker: true,
+      blobGroup: decals.blobGroup,
+      particles: [dust],
+      update: function () {}
+    };
+  });
+})();
+
+;
+(function () {
+  'use strict';
+  // ======================= 江南水乡夜 =================================
+  var texFrom = PS1.texFrom, pixelLoop = PS1.pixelLoop, newCanvas = PS1.newCanvas;
+  var hash2 = PS1.hash2, vnoise = PS1.vnoise;
+  var boxMesh = PS1.boxMesh, prismMesh = PS1.prismMesh, quadMesh = PS1.quadMesh;
+  var quadCorners = PS1.quadCorners, blobMesh = PS1.blobMesh;
+  var cs = PS1.cs, setRelight = PS1.setRelight;
+  var ps1Material = PS1.ps1Material;
+
+  function whitewashCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 9, y / 9, 7, 3);
+      var r = 168 + n * 30, g = 166 + n * 28, b = 158 + n * 26;
+      var stain = vnoise(x / 15 + 4, y / 34, 4, 2);
+      if (stain > 0.64) { var k = (stain - 0.64) * 1.5; r *= 1 - k * 0.42; g *= 1 - k * 0.40; b *= 1 - k * 0.34; }
+      if (y > 52) { var d = (y - 52) / 12; r *= 1 - d * 0.5; g *= 1 - d * 0.45; b *= 1 - d * 0.35; }  // damp base
+      return [r, g, b];
+    });
+  }
+  function tileCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var col = Math.floor(x / 8);
+      var row = Math.floor(y / 10);
+      var tint = (hash2(col, row * 3) * 2 - 1) * 9;
+      var r = 42 + tint, g = 44 + tint, b = 50 + tint;
+      if (x % 8 < 1) { r *= 0.55; g *= 0.55; b *= 0.55; }
+      if (y % 10 === 0) { r *= 1.5; g *= 1.5; b *= 1.5; }
+      var moss = vnoise(x / 16, y / 16, 4, 2);
+      if (moss > 0.72) { var k = (moss - 0.72) * 1.6; r *= 1 - k * 0.5; g *= 1 - k * 0.05; b *= 1 - k * 0.4; }
+      return [r, g, b];
+    });
+  }
+  function nightWaterCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var w1 = Math.sin((x + Math.sin(y * 0.32) * 6) * 0.38);
+      var w2 = Math.sin((y + Math.sin(x * 0.26) * 7) * 0.3 + 1.6);
+      var k = 0.78 + 0.14 * w1 + 0.12 * w2;
+      var r = 9 * k, g = 16 * k, b = 24 * k;
+      if (w1 > 0.9 && w2 > 0.45) { r += 36; g += 52; b += 62; }     // moonlit crests
+      return [r, g, b];
+    });
+  }
+  function stoneSlabCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var row = Math.floor(y / 16), x2 = x + (row & 1) * 14;
+      var col = Math.floor(x2 / 28), cx = x2 - col * 28;
+      var tint = (hash2(col + row * 5, row) * 2 - 1) * 10;
+      var r = 96 + tint, g = 98 + tint, b = 102 + tint;
+      var n = vnoise(x / 6, y / 6, 8, 2);
+      r *= 0.88 + n * 0.24; g *= 0.88 + n * 0.24; b *= 0.88 + n * 0.24;
+      if (y % 16 < 1 || cx < 1) { r *= 0.5; g *= 0.5; b *= 0.5; }
+      return [r, g, b];
+    });
+  }
+  function woodDarkCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var grain = vnoise(x / 4, y / 24, 8, 2);
+      var r = 74 * (0.85 + grain * 0.3), g = 56 * (0.85 + grain * 0.3), b = 42 * (0.85 + grain * 0.3);
+      if (x % 17 < 1) { r *= 0.6; g *= 0.6; b *= 0.6; }
+      return [r, g, b];
+    });
+  }
+  function bannerRedCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var r = 158, g = 30, b = 26;
+      if (y > 20 && y < 30 && (x + y) % 21 < 12) { r = 216; g = 180; b = 70; }  // 酒 character band hint
+      var n = vnoise(x / 10, y / 10, 5, 2);
+      r *= 0.9 + n * 0.2; g *= 0.9 + n * 0.2; b *= 0.9 + n * 0.2;
+      if (y < 2) { r *= 0.4; g *= 0.4; b *= 0.4; }
+      return [r, g, b];
+    });
+  }
+
+  var whitewashTex = texFrom(whitewashCanvas());
+  var tileTex = texFrom(tileCanvas());
+  var nightWaterTex = texFrom(nightWaterCanvas());
+  var stoneSlabTex = texFrom(stoneSlabCanvas());
+  var woodDarkTex = texFrom(woodDarkCanvas());
+  var bannerRedTex = texFrom(bannerRedCanvas());
+
+  var matWall = ps1Material(whitewashTex);
+  var matTile = ps1Material(tileTex);
+  var matWater = ps1Material(nightWaterTex);
+  var matSlab = ps1Material(stoneSlabTex);
+  var matWoodDark = ps1Material(woodDarkTex);
+  var matBannerRed = ps1Material(bannerRedTex);
+  var matWindowWarm = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 200, 110)));
+  var matLantern = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 90, 45)));
+
+  var MOON = new THREE.Vector3(-0.22, 0.78, 0.30).normalize();
+  var LANTERNS = [];   // baked warm pools along the eaves (filled BEFORE geometry bakes)
+  var STRINGS = [
+    { x0: -19, x1: -13, y: 3.1, z: -4.05 }, { x0: -10.5, x1: -5.5, y: 3.4, z: -4.45 },
+    { x0: -14, x1: -11, y: 3.2, z: 4.45 }, { x0: 5, x1: 8, y: 3.3, z: 4.45 }
+  ];
+  STRINGS.forEach(function (st2) {
+    for (var lb = 0; lb <= 4; lb += 2) {
+      var t = lb / 4;
+      LANTERNS.push([st2.x0 + (st2.x1 - st2.x0) * t, st2.y - 0.22 * Math.sin(Math.PI * t) - 0.1, st2.z]);
+    }
+  });
+  LANTERNS.push([-4.2, 1.95, -1.7], [4.2, 1.95, 1.7], [-2.0, 2.5, -3.9], [3.5, 2.5, 3.9]);
+  var wtRelight = function (x, y, z, nx, ny, nz) {
+    var ndl = Math.max(0, nx * MOON.x + ny * MOON.y + nz * MOON.z);
+    var hemi = 0.5 + 0.5 * ny;
+    var r = 0.10 + 0.16 * ndl + 0.03 * hemi;
+    var g = 0.13 + 0.20 * ndl + 0.04 * hemi;
+    var b = 0.20 + 0.30 * ndl + 0.06 * hemi;
+    for (var i = 0; i < LANTERNS.length; i++) {
+      var L = LANTERNS[i];
+      var dx = L[0] - x, dy = L[1] - y, dz = L[2] - z;
+      var d2 = dx * dx + dy * dy + dz * dz;
+      var fall = 1.5 / (1 + d2 * 0.10);
+      var inv = 1 / (Math.sqrt(d2) + 1e-4);
+      var nd = Math.max(0, (dx * nx + dy * ny + dz * nz) * inv);
+      var w = fall * (0.4 + 0.6 * nd);
+      r += w * 1.35; g += w * 0.52; b += w * 0.22;
+    }
+    return [Math.min(1.15, r), Math.min(1.1, g), Math.min(1.1, b)];
+  };
+
+  PS1.registerScene(function () {
+    setRelight(wtRelight);
+    var scene = new THREE.Scene();
+    var decals = PS1.newDecalSet();
+    var colliders = [];
+
+    var moon = new THREE.DirectionalLight(0x8899cc, 1);
+    moon.position.copy(MOON).multiplyScalar(32);
+    moon.castShadow = true;
+    moon.shadow.mapSize.set(1024, 1024);
+    moon.shadow.camera.near = 2; moon.shadow.camera.far = 75;
+    moon.shadow.camera.left = -19; moon.shadow.camera.right = 19;
+    moon.shadow.camera.top = 19; moon.shadow.camera.bottom = -19;
+    moon.shadow.bias = -0.004; moon.shadow.normalBias = 0.05;
+    scene.add(moon); scene.add(moon.target);
+
+    scene.add(PS1.makeSky({
+      top: [0.012, 0.025, 0.06], horizon: [0.075, 0.10, 0.155], bottom: [0.03, 0.04, 0.06],
+      sunDir: MOON.toArray(), sunCol: [0.6, 0.68, 0.85], sunCut: 0.9993, sunGlow: 0.08,
+      stars: 0.55, meteors: 0.4, radius: 90
+    }));
+
+    // ---------------- canal + embankments ------------------------------
+    var CANAL = { z0: -2.5, z1: 2.5 };                       // canal runs along x
+    scene.add(PS1.groundGrid(matWater, 0, 0, 46, 4.6, 8, 0.7, 0.05, 1));
+    scene.add(PS1.groundGrid(matSlab, 0, -5.0, 46, 5.0, 8, 1, 0.14, 1));   // north bank
+    scene.add(PS1.groundGrid(matSlab, 0, 5.0, 46, 5.0, 8, 1, 0.14, 1));    // south bank
+    // outer ground (dark)
+    scene.add(PS1.groundGrid(ps1Material(PS1.solidTexture(18, 22, 26)), 0, 0, 60, 26, 8, 1, -0.02, 1));
+    // embankment walls into the water
+    scene.add(PS1.wallSurface(matSlab, [-23, 0.14, -2.3], [23, 0.14, -2.3], [23, -0.5, -2.3], [-23, -0.5, -2.3], 20, 0.6, 0, 0, -1));
+    scene.add(PS1.wallSurface(matSlab, [23, 0.14, 2.3], [-23, 0.14, 2.3], [-23, -0.5, 2.3], [23, -0.5, 2.3], 20, 0.6, 0, 0, 1));
+
+    // ---------------- whitewash houses with horse-head gables ----------
+    function house(x, z, w, d, h, front) {                   // front: +1 faces canal from north bank, -1 from south
+      scene.add(cs(boxMesh(matWall, x, h / 2, z, d, h, w, 1.0)));
+      // two-layer tile roof, ridge along x
+      var rh = 1.3, ry = h;
+      scene.add(cs(quadCorners(matTile,
+        [x - d / 2 - 0.4, ry, z - w / 2 - 0.35], [x + d / 2 + 0.4, ry, z - w / 2 - 0.35],
+        [x + d / 2, ry + rh, z], [x - d / 2, ry + rh, z], d * 0.5, w * 0.6)));
+      scene.add(cs(quadCorners(matTile,
+        [x - d / 2 - 0.4, ry, z + w / 2 + 0.35], [x + d / 2 + 0.4, ry, z + w / 2 + 0.35],
+        [x + d / 2, ry + rh, z], [x - d / 2, ry + rh, z], d * 0.5, w * 0.6)));
+      // horse-head gable steps at both x ends
+      [-1, 1].forEach(function (sd2) {
+        var gx = x + sd2 * (d / 2 + 0.1);
+        scene.add(boxMesh(matWall, gx, ry + 0.25, z, 0.22, 0.55, w + 0.5, 1.0));
+        scene.add(boxMesh(matTile, gx, ry + 0.62, z, 0.28, 0.2, w + 0.62, 1.2));
+        scene.add(boxMesh(matWall, gx, ry + 0.95, z, 0.18, 0.45, w * 0.55, 1.0));
+        scene.add(boxMesh(matTile, gx, ry + 1.25, z, 0.24, 0.16, w * 0.65, 1.2));
+      });
+      // door + lit windows on the canal face
+      var fz = z + front * (w / 2 + 0.06);
+      scene.add(boxMesh(matWoodDark, x, 1.02, fz, 0.95, 2.0, 0.1, 2));
+      var lit = hash2(Math.round(x * 3), Math.round(z));
+      var winMat2 = lit > 0.5 ? matWindowWarm : ps1Material(PS1.solidTexture(14, 16, 22));
+      scene.add(boxMesh(winMat2, x - d * 0.26, 1.7, fz, 0.62, 0.66, 0.06, 2, 0, lit > 0.5 ? [1.35, 0.92, 0.4] : null));
+      scene.add(boxMesh(winMat2, x + d * 0.26, h + 1.0, fz, 0.62, 0.7, 0.06, 2, 0, lit > 0.5 ? [1.35, 0.92, 0.4] : null));
+      colliders.push({ x0: x - d / 2 - 0.2, z0: z - w / 2 - 0.4, x1: x + d / 2 + 0.2, z1: z + w / 2 + 0.4 });
+    }
+    house(-16.5, -6.6, 5.5, 4.6, 3.2, 1);   // north bank row
+    house(-8.0, -7.0, 6.0, 5.0, 3.5, 1);
+    house(1.5, -6.6, 5.5, 4.8, 3.1, 1);
+    house(10.5, -6.9, 6.2, 5.0, 3.4, 1);
+    house(-12.5, 7.0, 5.8, 4.8, 3.3, -1);   // south bank row
+    house(-3.0, 6.6, 5.2, 4.4, 3.0, -1);
+    house(6.5, 7.0, 6.0, 5.0, 3.4, -1);
+    house(15.0, 6.7, 5.5, 4.6, 3.2, -1);
+
+    // ---------------- arched stone bridge --------------------------------
+    (function () {
+      var bx = 0, half = 3.4, deck = 0.42, topY = 2.05;
+      // corbelled arch: stepped slabs leaving a water gap
+      for (var st = 0; st < 4; st++) {
+        var yb = 0.14 + st * 0.48;
+        var inset = 0.85 - st * 0.22;
+        [-1, 1].forEach(function (sd2) {
+          scene.add(cs(boxMesh(matSlab, bx + sd2 * (half - inset / 2), yb + 0.24, 0, inset + 0.3, 0.48, 4.6, 1.0)));
+        });
+      }
+      // deck ramps + flat top
+      scene.add(cs(quadCorners(matSlab, [bx - 4.6, 0.14, -2.1], [bx - 1.6, topY - deck, -2.1], [bx - 1.6, topY - deck, 2.1], [bx - 4.6, 0.14, 2.1], 3, 2)));
+      scene.add(cs(quadCorners(matSlab, [bx + 4.6, 0.14, -2.1], [bx + 1.6, topY - deck, -2.1], [bx + 1.6, topY - deck, 2.1], [bx + 4.6, 0.14, 2.1], 3, 2)));
+      scene.add(cs(boxMesh(matSlab, bx, topY - deck / 2, 0, 3.2, deck, 4.6, 1.0)));
+      // railings
+      [-1.9, 1.9].forEach(function (rz) {
+        for (var rp = -2; rp <= 2; rp++) {
+          scene.add(cs(boxMesh(matSlab, bx + rp * 0.8, topY + 0.26, rz, 0.14, 0.52, 0.14, 2)));
+        }
+        scene.add(boxMesh(matSlab, bx, topY + 0.5, rz, 4.4, 0.12, 0.14, 1.4));
+      });
+      colliders.push({ x0: bx - 4.6, z0: -2.4, x1: bx + 4.6, z1: 2.4 });
+      // lanterns at the bridge heads
+      [[-4.2, -1.7], [4.2, 1.7]].forEach(function (p) {
+        scene.add(cs(prismMesh(matWoodDark, p[0], p[1], 0.06, 1.9, 6, 1.2, 2.4)));
+        scene.add(boxMesh(matLantern, p[0], 1.95, p[1], 0.16, 0.2, 0.16, 2, 0, [1.8, 0.55, 0.25]));
+      });
+    })();
+
+    // ---------------- eave lantern strings + reflections -----------------
+    STRINGS.forEach(function (st2) {
+      for (var lb = 0; lb <= 4; lb++) {
+        var t = lb / 4;
+        var lx = st2.x0 + (st2.x1 - st2.x0) * t;
+        var ly = st2.y - 0.22 * Math.sin(Math.PI * t) - 0.1;
+        scene.add(boxMesh(matLantern, lx, ly, st2.z, 0.15, 0.18, 0.15, 2, 0, [1.8, 0.55, 0.25]));
+      }
+      // reflection band on the canal water below
+      var wBand = st2.z < 0 ? -1.05 : 1.05;
+      decals.rect((st2.x0 + st2.x1) / 2, wBand, Math.abs(st2.x1 - st2.x0) + 0.6, 0.9,
+        PS1.decalMaterial(0.34, 0.11, 0.05, 0.42), 0.11);
+    });
+    // moon glitter band on the water
+    decals.rect(6.0, 1.4, 7.0, 1.0, PS1.decalMaterial(0.16, 0.20, 0.30, 0.35), 0.11);
+    decals.rect(-6.5, 0.9, 6.0, 1.0, PS1.decalMaterial(0.16, 0.20, 0.30, 0.35), 0.11);
+
+    // ---------------- moored boat ---------------------------------------
+    (function () {
+      var bx = -8.2, bz = -0.9;
+      var hull = prismMesh(matWoodDark, 0, 0, 0.5, 0.5, 6, 2.4, 1, null, 0);
+      hull.scale.set(1, 0.5, 2.6);
+      hull.position.set(bx, 0.18, bz);
+      scene.add(cs(hull));
+      // bamboo hood (squashed cylinder)
+      var hood = prismMesh(matWoodDark, 0, 0, 0.42, 0.5, 7, 2, 1, null, 0);
+      hood.scale.set(1, 0.62, 1.35);
+      hood.position.set(bx + 0.8, 0.42, bz);
+      scene.add(hood);
+      // mooring pole + rope hint
+      scene.add(cs(boxMesh(matWoodDark, bx - 2.4, 0.5, bz + 0.3, 0.08, 1.4, 0.08, 2)));
+      colliders.push({ x0: bx - 1.4, z0: bz - 0.75, x1: bx + 1.4, z1: bz + 0.75 });
+    })();
+
+    // ---------------- dock + steps + props -------------------------------
+    (function () {
+      var dx = 12.5, dz = -3.6;
+      scene.add(boxMesh(matWoodDark, dx, 0.2, dz, 3.2, 0.12, 1.6, 1.4));
+      [[-1.4, -0.6], [1.4, -0.6], [-1.4, 0.6], [1.4, 0.6]].forEach(function (p) {
+        scene.add(boxMesh(matWoodDark, dx + p[0], 0.07, dz + p[1], 0.12, 0.14, 0.12, 2));
+      });
+      colliders.push({ x0: dx - 1.7, z0: dz - 0.85, x1: dx + 1.7, z1: dz + 0.85 });
+    })();
+    // wine banner on a pole (sways)
+    var banner = new THREE.Group();
+    banner.position.set(-9.5, 3.0, -4.3);
+    (function () {
+      var b2 = PS1.quadCorners(matBannerRed, [0, 0, -0.35], [0, 0, 0.35], [0, -1.4, 0.35], [0, -1.4, -0.35], 0.8, 1.8);
+      banner.add(b2);
+      scene.add(banner);
+    })();
+    scene.add(cs(boxMesh(matWoodDark, -9.5, 1.7, -4.3, 0.09, 3.4, 0.09, 2)));
+    // stone lions at the bridge head
+    function lion(x, z) {
+      scene.add(cs(prismMesh(matSlab, x, z, 0.28, 0.42, 6, 1.4, 0.6)));
+      scene.add(cs(boxMesh(matSlab, x, 0.62, z, 0.44, 0.3, 0.3, 1.2)));
+      scene.add(cs(boxMesh(matSlab, x, 0.88, z, 0.3, 0.28, 0.28, 1.2)));
+      scene.add(boxMesh(matSlab, x, 1.0, z + 0.12, 0.12, 0.1, 0.12, 2));
+      colliders.push({ x0: x - 0.35, z0: z - 0.35, x1: x + 0.35, z1: z + 0.35 });
+    }
+    lion(-4.9, -1.9); lion(-4.9, 1.9);
+    // laundry pole + planter boxes on the south bank
+    scene.add(cs(boxMesh(matWoodDark, 2.8, 1.4, 4.6, 0.07, 2.8, 0.07, 2)));
+    scene.add(boxMesh(ps1Material(PS1.solidTexture(150, 84, 60)), -0.5, 0.3, 4.4, 1.1, 0.35, 0.4, 1.4));
+    scene.add(blobMesh(matBannerRed, -0.5, 0.62, 4.4, 0.22, 0.8, 0.3, function () { return [0.5, 1.1, 0.5]; }));  // shrub
+    // hanging street-lantern posts on the banks
+    [[-2.0, -3.9], [3.5, 3.9]].forEach(function (p) {
+      scene.add(cs(prismMesh(matWoodDark, p[0], p[1], 0.07, 2.6, 6, 1.2, 3)));
+      scene.add(boxMesh(matLantern, p[0], 2.5, p[1], 0.2, 0.24, 0.2, 2, 0, [1.8, 0.55, 0.25]));
+      decals.oct(p[0], p[1] + (p[1] < 0 ? -0.6 : 0.6), 1.2, PS1.decalMaterial(0.30, 0.10, 0.05, 0.4), 0.012, Math.round(p[0] * 7));
+    });
+
+
+    // ---------------- v8 detail pass ------------------------------------
+    // second moored boat with a sleeping cat
+    var boatCat = new THREE.Group();
+    (function () {
+      var bx = -12.6, bz = 0.4;
+      var hull2 = prismMesh(matWoodDark, 0, 0, 0.5, 0.5, 6, 2.4, 1, null, 0);
+      hull2.scale.set(0.9, 0.5, 2.3);
+      hull2.position.set(bx, 0.18, bz);
+      scene.add(cs(hull2));
+      scene.add(cs(boxMesh(matWoodDark, bx - 2.1, 0.5, bz, 0.07, 1.3, 0.07, 2)));   // mooring pole
+      var matCat2 = ps1Material(PS1.solidTexture(26, 24, 26));
+      boatCat.position.set(bx + 0.5, 0.5, bz);
+      boatCat.add(PS1.blobMesh(matCat2, 0, 0, 0, 0.12, 0.8, 0.25, function () { return [1, 1, 1]; }));
+      boatCat.add(boxMesh(ps1Material(PS1.solidTexture(190, 235, 130)), 0, 0.1, -0.1, 0.05, 0.04, 0.02, 2, 0, [1.4, 1.7, 0.9]));
+      scene.add(boatCat);
+      colliders.push({ x0: bx - 1.3, z0: bz - 0.7, x1: bx + 1.3, z1: bz + 0.7 });
+    })();
+    // wine jars stacked by the west house
+    [[-14.6, -4.4], [-14.0, -4.9], [-14.4, -5.3]].forEach(function (j) {
+      scene.add(prismMesh(ps1Material(PS1.solidTexture(94, 74, 52)), j[0], j[1], 0.24, 0.6, 7, 1.8, 0.9));
+    });
+    // bamboo laundry poles with clothes over the south bank
+    (function () {
+      var px3 = 0.5, pz3 = 4.2;
+      scene.add(cs(boxMesh(matWoodDark, px3 - 1.4, 1.3, pz3, 0.05, 2.6, 0.05, 2, 0.06)));
+      scene.add(cs(boxMesh(matWoodDark, px3 + 1.4, 1.3, pz3, 0.05, 2.6, 0.05, 2, -0.06)));
+      scene.add(boxMesh(matWoodDark, px3, 2.42, pz3, 2.9, 0.03, 0.03, 3));
+      [[-0.9, [186, 168, 150]], [-0.3, [96, 108, 138]], [0.4, [168, 96, 88]], [1.0, [150, 150, 160]]].forEach(function (c) {
+        scene.add(boxMesh(ps1Material(PS1.solidTexture(c[1][0], c[1][1], c[1][2])), px3 + c[0], 2.2, pz3, 0.4, 0.5, 0.05, 1.6));
+      });
+    })();
+    // window-sill planters on the canal faces
+    [[-8.0, -4.5], [1.5, -4.3], [-3.0, 4.35], [10.5, -4.45]].forEach(function (wp) {
+      scene.add(boxMesh(matWoodDark, wp[0], 1.42, wp[1], 0.7, 0.16, 0.2, 1.4));
+      scene.add(blobMesh(ps1Material(PS1.solidTexture(52, 104, 60)), wp[0], 1.6, wp[1], 0.16, 0.9, 0.3, function () { return [0.8, 1.05, 0.8]; }));
+    });
+    // hanging dried fish under the dock-side eave
+    (function () {
+      var hx = 11.4, hz = -3.5;
+      scene.add(boxMesh(matWoodDark, hx, 2.4, hz, 1.4, 0.04, 0.04, 3));
+      var matFish = ps1Material(PS1.solidTexture(168, 148, 110));
+      for (var fi = 0; fi < 5; fi++) {
+        scene.add(boxMesh(matFish, hx - 0.55 + fi * 0.28, 2.2, hz, 0.06, 0.3, 0.1, 2, 0.1 * (fi % 2)));
+      }
+    })();
+    // big lily jar + lotus leaves by the south bank steps
+    (function () {
+      var jx = -6.5, jz = 3.6;
+      scene.add(prismMesh(ps1Material(PS1.solidTexture(96, 78, 60)), jx, jz, 0.4, 0.75, 8, 2, 1.2));
+      scene.add(prismMesh(matWater, jx, jz, 0.32, 0.04, 8, 1, 0.4, null, 0.75));
+      [[-0.1, 0.1], [0.15, -0.08]].forEach(function (l2) {
+        var leaf = prismMesh(matBannerRed, 0, 0, 0.16, 0.03, 8, 1, 1, null, 0);
+        leaf.position.set(jx + l2[0], 0.82, jz + l2[1]);
+        leaf.scale.set(1, 1, 1);
+        scene.add(leaf);
+      });
+    })();
+    // vendor carrying-pole with baskets (resting by the bridge head)
+    (function () {
+      var vx = 4.9, vz = 2.6;
+      scene.add(cs(boxMesh(matWoodDark, vx, 1.15, vz, 0.05, 1.7, 0.05, 2, 0.5)));
+      [[-0.55, 0], [0.6, 0.1]].forEach(function (b3) {
+        scene.add(boxMesh(matWoodDark, vx + b3[0], 0.3, vz + b3[1], 0.42, 0.3, 0.42, 1.6));
+      });
+    })();
+    // tea table + stools outside the east house
+    (function () {
+      var tx2 = 9.5, tz2 = 3.9;
+      scene.add(boxMesh(matWoodDark, tx2, 0.42, tz2, 0.9, 0.08, 0.9, 1.5));
+      [[-0.35, -0.35], [0.35, 0.35]].forEach(function (lg) {
+        scene.add(boxMesh(matWoodDark, tx2 + lg[0], 0.2, tz2 + lg[1], 0.4, 0.4, 0.4, 1.5));
+      });
+      scene.add(prismMesh(ps1Material(PS1.solidTexture(140, 100, 60)), tx2, tz2, 0.1, 0.14, 6, 1.4, 0.5, null, 0.46));
+      colliders.push({ x0: tx2 - 0.6, z0: tz2 - 0.6, x1: tx2 + 0.6, z1: tz2 + 0.6 });
+    })();
+    // three more lantern strings across side lanes
+    var MORE_STR = [
+      { x0: -6.2, x1: -1.4, y: 3.15, z: -4.15 }, { x0: 7.5, x1: 12.5, y: 3.2, z: -4.35 }, { x0: 11.5, x1: 15.5, y: 3.25, z: 4.55 }
+    ];
+    MORE_STR.forEach(function (st3) {
+      for (var lb2 = 0; lb2 <= 4; lb2++) {
+        var t2 = lb2 / 4;
+        var lx2 = st3.x0 + (st3.x1 - st3.x0) * t2;
+        var ly2 = st3.y - 0.22 * Math.sin(Math.PI * t2) - 0.1;
+        scene.add(boxMesh(matLantern, lx2, ly2, st3.z, 0.15, 0.18, 0.15, 2, 0, [1.8, 0.55, 0.25]));
+      }
+      decals.rect((st3.x0 + st3.x1) / 2, st3.z < 0 ? -1.05 : 1.05, Math.abs(st3.x1 - st3.x0) + 0.6, 0.9,
+        PS1.decalMaterial(0.34, 0.11, 0.05, 0.42), 0.11);
+    });
+    // stone drum blocks (抱鼓石) at the bridge heads
+    [[-4.35, -1.75], [-4.35, 1.75]].forEach(function (dr) {
+      scene.add(prismMesh(matSlab, dr[0], dr[1], 0.2, 0.5, 8, 1.4, 0.8));
+      scene.add(prismMesh(matSlab, dr[0], dr[1], 0.24, 0.18, 8, 1.4, 0.5, null, 0.5));
+    });
+
+    // water mist
+    var mist = PS1.makeParticles({
+      mode: 'steam', count: 70, color: [0.30, 0.34, 0.40],
+      size: 0.055, speed: 0.22, sway: 0.15,
+      area: [-18, 18, -2.2, 2.2, 1.1]
+    });
+    scene.add(mist);
+
+    return {
+      name: '江南水乡夜',
+      scene: scene,
+      colliders: colliders,
+      bounds: { x0: -18.5, x1: 18.5, z0: -9.2, z1: 9.2 },
+      spawn: [-10.5, 3.2, Math.atan2(-(-12.0 - -10.5), -(0.6 - 3.2)), 0.0],
+      idle: { pos: [0.2, 2.75, 0.1], target: [-12.0, 1.1, 0.6] },   // standing ON the bridge, looking west down the canal
+      fog: { color: [0.075, 0.10, 0.155], near: 7, far: 33 },
+      noFlicker: true,
+      blobGroup: decals.blobGroup,
+      particles: [mist],
+      update: function (t) {
+        nightWaterTex.offset.x = t * 0.015;
+        nightWaterTex.offset.y = t * 0.05;
+        matLantern.uniforms.uFlicker.value = 0.92 + 0.07 * Math.sin(t * 9.7) + 0.03 * Math.sin(t * 24.3);
+        matWindowWarm.uniforms.uFlicker.value = 0.94 + 0.06 * Math.sin(t * 7.3);
+        banner.rotation.z = 0.06 * Math.sin(t * 1.4);
+        boatCat.rotation.z = 0.05 * Math.sin(t * 1.1);
+        boatCat.position.y = 0.5 + 0.03 * Math.sin(t * 1.7);
+      }
+    };
+  });
+})();
+
+;
+(function () {
+  'use strict';
+  // ======================= 太空舷窗观测舱 ==============================
+  var texFrom = PS1.texFrom, pixelLoop = PS1.pixelLoop, newCanvas = PS1.newCanvas;
+  var hash2 = PS1.hash2, vnoise = PS1.vnoise;
+  var boxMesh = PS1.boxMesh, prismMesh = PS1.prismMesh, quadMesh = PS1.quadMesh;
+  var quadCorners = PS1.quadCorners, blobMesh = PS1.blobMesh;
+  var cs = PS1.cs, setRelight = PS1.setRelight;
+  var ps1Material = PS1.ps1Material;
+
+  function deckCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var plate = Math.floor(x / 22), py = Math.floor(y / 22);
+      var tint = (hash2(plate, py) * 2 - 1) * 6;
+      var n = vnoise(x / 7, y / 7, 8, 2);
+      var r = 66 + n * 20 + tint, g = 70 + n * 20 + tint, b = 78 + n * 22 + tint;
+      var lx = x % 22, ly = y % 22;
+      if (lx < 1 || ly < 1) { r *= 0.45; g *= 0.45; b *= 0.45; }
+      if (lx > 9 && lx < 13 && ly > 9 && ly < 13) { r *= 0.6; g *= 0.6; b *= 0.6; }   // tread plug
+      var scuff = vnoise(x / 12 + 2, y / 18, 4, 2);
+      if (scuff > 0.70) { var k = (scuff - 0.70) * 1.4; r *= 1 - k * 0.4; g *= 1 - k * 0.4; b *= 1 - k * 0.35; }
+      return [r, g, b];
+    });
+  }
+  function panelCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 8, y / 8, 6, 2);
+      var r = 58 + n * 18, g = 60 + n * 18, b = 68 + n * 20;
+      if (x % 31 < 1 || y % 21 < 1) { r *= 0.5; g *= 0.5; b *= 0.5; }      // panel seams
+      var rivet = (x % 31 > 12 && x % 31 < 16 && y % 21 > 8 && y % 21 < 12);
+      if (rivet) { r = 96; g = 98; b = 104; }
+      return [r, g, b];
+    });
+  }
+  function gasGiantCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var band = Math.sin(y * 0.22 + Math.sin(x * 0.05) * 1.8);
+      var storm = vnoise(x / 9, y / 9, 6, 2);
+      var r, g, b;
+      if (band > 0.3) { r = 205; g = 158; b = 108; }
+      else if (band > -0.2) { r = 178; g = 128; b = 92; }
+      else { r = 128; g = 92; b = 78; }
+      if (storm > 0.72) { var k = (storm - 0.72) * 2.2; r += (60 - r * 0.2) * k * 0.3; g += (40 - g * 0.2) * k * 0.3; }
+      var spot = Math.hypot(x - 44, y - 24);
+      if (spot < 7) { r = 222; g = 130; b = 78; }                            // great storm
+      return [r * (0.92 + storm * 0.14), g * (0.92 + storm * 0.14), b * (0.92 + storm * 0.14)];
+    });
+  }
+  function ringCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var band = Math.sin(y * 0.9) * 0.5 + 0.5;
+      var gap = (y > 26 && y < 31) || (y > 44 && y < 47);
+      var a = gap ? 30 : 150 + band * 90;
+      var t = (hash2(x, y) * 2 - 1) * 8;
+      return [a * 0.98 + t, a * 0.9 + t, a * 0.76 + t];
+    });
+  }
+
+  var deckTex = texFrom(deckCanvas());
+  var panelTex = texFrom(panelCanvas());
+  var gasGiantTex = texFrom(gasGiantCanvas());
+  var ringTex = texFrom(ringCanvas());
+
+  var matDeck = ps1Material(deckTex);
+  var matPanel = ps1Material(panelTex);
+  var matGiant = ps1Material(gasGiantTex);
+  var matRing = ps1Material(ringTex);
+  var matBlinkR = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 80, 70)));
+  var matBlinkG = PS1.privateFlicker(ps1Material(PS1.solidTexture(90, 255, 130)));
+  var matBlinkA = PS1.privateFlicker(ps1Material(PS1.solidTexture(120, 190, 255)));
+  var matStrip = PS1.privateFlicker(ps1Material(PS1.solidTexture(235, 240, 255)));
+
+  var SUNDIR = new THREE.Vector3(0.15, 0.35, -0.92).normalize();   // sun sits in the window cone
+  var INTERIOR = [3.2, 3.0, -1.6];                                 // ceiling light position
+  var spaceRelight = function (x, y, z, nx, ny, nz) {
+    var ndl = Math.max(0, nx * SUNDIR.x + ny * SUNDIR.y + nz * SUNDIR.z);
+    // interior fill from ceiling strips
+    var dx = INTERIOR[0] - x, dy = INTERIOR[1] - y, dz = INTERIOR[2] - z;
+    var d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    var inv = 1 / (d + 1e-4);
+    var nd = Math.max(0, (dx * nx + dy * ny + dz * nz) * inv);
+    var fill = Math.max(0, 1.9 - 0.15 * d) * (0.45 + 0.55 * nd);
+    var sun = ndl * 1.15;   // hard sunlight through the window
+    var r = sun * 1.05 + fill * 0.95;
+    var g = sun * 1.02 + fill * 1.0;
+    var b = sun * 0.95 + fill * 1.14;
+    return [Math.min(1.22, r), Math.min(1.2, g), Math.min(1.2, b)];
+  };
+
+  PS1.registerScene(function () {
+    setRelight(spaceRelight);
+    var scene = new THREE.Scene();
+    var decals = PS1.newDecalSet();
+    var colliders = [];
+
+    var sun = new THREE.DirectionalLight(0xffffff, 1);
+    sun.position.copy(SUNDIR).multiplyScalar(30);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.camera.near = 1; sun.shadow.camera.far = 50;
+    sun.shadow.camera.left = -8; sun.shadow.camera.right = 8;
+    sun.shadow.camera.top = 6; sun.shadow.camera.bottom = -6;
+    sun.shadow.bias = -0.004; sun.shadow.normalBias = 0.05;
+    scene.add(sun); scene.add(sun.target);
+
+    scene.add(PS1.makeSky({
+      top: [0.004, 0.005, 0.012], horizon: [0.004, 0.005, 0.012], bottom: [0.002, 0.003, 0.006],
+      sunDir: SUNDIR.toArray(), sunCol: [1.5, 1.42, 1.2], sunCut: 0.99955, sunGlow: 0.10,
+      stars: 1.2, meteors: 0, radius: 95
+    }));
+
+    // ---------------- ringed gas giant + moon --------------------------
+    // PS1 materials read a per-vertex color attribute: bake relight into any
+    // stock Three geometry before adding it, and rebuild the ring's UVs so the
+    // band texture runs concentrically instead of as straight stripes.
+    function bakeVertexColors(mesh) {
+      var g = mesh.geometry, pp = g.attributes.position, nn = g.attributes.normal, cols = [];
+      for (var i = 0; i < pp.count; i++) {
+        var wx = pp.getX(i) + mesh.position.x, wy = pp.getY(i) + mesh.position.y, wz = pp.getZ(i) + mesh.position.z;
+        var c = PS1.relight(wx, wy, wz, nn.getX(i), nn.getY(i), nn.getZ(i));
+        cols.push(c[0], c[1], c[2]);
+      }
+      g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+      return mesh;
+    }
+    var planet = new THREE.Mesh(new THREE.SphereGeometry(16, 18, 12), matGiant);
+    planet.position.set(-8, 8, -70);
+    scene.add(bakeVertexColors(planet));
+    var ring = new THREE.Mesh(new THREE.RingGeometry(19, 27, 30, 1), matRing);
+    (function () {   // radial UVs: v = (r - inner)/(outer - inner)
+      var pp = ring.geometry.attributes.position, uv = ring.geometry.attributes.uv;
+      for (var i = 0; i < pp.count; i++) {
+        var x = pp.getX(i), y = pp.getY(i);
+        var r = Math.sqrt(x * x + y * y);
+        uv.setXY(i, Math.atan2(y, x) / (Math.PI * 2) + 0.5, (r - 19) / 8);
+      }
+    })();
+    ring.position.copy(planet.position);
+    ring.rotation.x = Math.PI / 2 - 0.42;
+    ring.rotation.y = 0.2;
+    scene.add(bakeVertexColors(ring));
+    var moon = new THREE.Mesh(new THREE.SphereGeometry(2.4, 10, 8), ps1Material(PS1.solidTexture(150, 148, 145)));
+    moon.position.set(6, -4, -50);
+    scene.add(bakeVertexColors(moon));
+    // drifting cargo satellite (animated)
+    var sat = new THREE.Group();
+    (function () {
+      var matSat = ps1Material(PS1.solidTexture(120, 124, 132));
+      sat.add(boxMesh(matSat, 0, 0, 0, 0.9, 0.9, 1.3, 1.2));
+      sat.add(boxMesh(matBlinkR, 0, 0.7, 0, 0.1, 0.1, 0.1, 2, 0, [1.6, 0.4, 0.4]));
+      sat.add(boxMesh(matStrip, 1.5, 0, 0, 1.6, 0.06, 0.9, 2, 0, [0.45, 0.5, 0.55]));   // solar panel
+      sat.add(boxMesh(matStrip, -1.5, 0, 0, 1.6, 0.06, 0.9, 2, 0, [0.45, 0.5, 0.55]));
+      sat.position.set(8, 3, -40);
+      sat.scale.set(0.5, 0.5, 0.5);
+      scene.add(sat);
+    })();
+
+    // ---------------- observation lounge --------------------------------
+    var R = { x: 4.2, zN: -5.4, zS: 4.6 };   // room: x -4.2..4.2, z -5.4..4.6
+    // floor + ceiling
+    scene.add(PS1.groundGrid(matDeck, 0, -0.4, 8.4, 10.0, 4, 1, 0, 1));
+    scene.add(PS1.groundGrid(matPanel, 0, -0.4, 8.4, 10.0, 4, 1, 3.2, -1));
+    // side + back walls
+    scene.add(PS1.wallSurface(matPanel, [-4.2, 0, R.zN], [-4.2, 0, R.zS], [-4.2, 3.2, R.zS], [-4.2, 3.2, R.zN], 5, 1.6, 1, 0, 0));
+    scene.add(PS1.wallSurface(matPanel, [4.2, 0, R.zS], [4.2, 0, R.zN], [4.2, 3.2, R.zN], [4.2, 3.2, R.zS], 5, 1.6, -1, 0, 0));
+    scene.add(PS1.wallSurface(matPanel, [4.2, 0, R.zS], [-4.2, 0, R.zS], [-4.2, 3.2, R.zS], [4.2, 3.2, R.zS], 5, 1.6, 0, 0, -1));
+    // north wall: solid border + big window opening (void shows the dome)
+    var WIN = { x0: -2.7, x1: 2.7, y0: 0.75, y1: 2.85 };
+    scene.add(PS1.wallSurface(matPanel, [-4.2, 0, R.zN], [WIN.x0, 0, R.zN], [WIN.x0, 3.2, R.zN], [-4.2, 3.2, R.zN], 2, 1.6, 0, 0, 1));
+    scene.add(PS1.wallSurface(matPanel, [WIN.x1, 0, R.zN], [4.2, 0, R.zN], [4.2, 3.2, R.zN], [WIN.x1, 3.2, R.zN], 2, 1.6, 0, 0, 1));
+    scene.add(PS1.wallSurface(matPanel, [WIN.x0, 0, R.zN], [WIN.x1, 0, R.zN], [WIN.x1, WIN.y0, R.zN], [WIN.x0, WIN.y0, R.zN], 5, 0.5, 0, 0, 1));
+    scene.add(PS1.wallSurface(matPanel, [WIN.x0, WIN.y1, R.zN], [WIN.x1, WIN.y1, R.zN], [WIN.x1, 3.2, R.zN], [WIN.x0, 3.2, R.zN], 5, 0.4, 0, 0, 1));
+    // thick window frame + mullions (they cast the shaft shadow on the floor)
+    scene.add(cs(boxMesh(matPanel, 0, WIN.y0, R.zN + 0.06, 5.8, 0.16, 0.22, 1.4)));
+    scene.add(cs(boxMesh(matPanel, 0, WIN.y1, R.zN + 0.06, 5.8, 0.16, 0.22, 1.4)));
+    [-1.35, 0, 1.35].forEach(function (mx) {
+      scene.add(cs(boxMesh(matPanel, mx, (WIN.y0 + WIN.y1) / 2, R.zN + 0.06, 0.14, 2.3, 0.22, 1.4)));
+    });
+    // handrail along the window
+    scene.add(boxMesh(matStrip, 0, 0.95, R.zN + 0.5, 5.4, 0.06, 0.06, 2, 0, [0.5, 0.55, 0.62]));
+    [-2.4, -0.8, 0.8, 2.4].forEach(function (px) {
+      scene.add(boxMesh(matStrip, px, 0.72, R.zN + 0.5, 0.05, 0.5, 0.05, 2, 0, [0.4, 0.45, 0.52]));
+    });
+
+    // sun shaft pool on the deck (bright decal where the window projects)
+    decals.rect(0.6, -3.6, 3.4, 1.9, PS1.decalMaterial(1.0, 0.97, 0.88, 0.5), 0.012);
+
+    // ---------------- lounge furniture ----------------------------------
+    // console desk under the window with blinking readouts
+    (function () {
+      var cx = 0, cz = -4.3;
+      scene.add(cs(boxMesh(matPanel, cx, 0.5, cz, 3.6, 0.16, 0.8, 1.4)));
+      [[-1.6, -0.28], [1.6, -0.28], [-1.6, 0.28], [1.6, 0.28]].forEach(function (p) {
+        scene.add(boxMesh(matPanel, cx + p[0], 0.25, cz + p[1], 0.12, 0.5, 0.12, 2));
+      });
+      scene.add(boxMesh(matPanel, cx, 0.62, cz + 0.18, 3.6, 0.1, 0.16, 1.4));   // lip
+      var blinkers = [[-1.2, matBlinkR], [-0.8, matBlinkG], [-0.4, matBlinkA], [0.2, matBlinkG], [0.7, matBlinkR], [1.3, matBlinkA]];
+      blinkers.forEach(function (b) {
+        scene.add(boxMesh(b[1], cx + b[0], 0.60, cz - 0.1, 0.08, 0.05, 0.08, 2, 0, [1.4, 1.4, 1.4]));
+      });
+      // small screen with scanline texture
+      scene.add(quadMesh(ps1Material(texFrom(pixelLoop(newCanvas(64), function (x, y) {
+        var line = Math.floor(y / 5) % 2 === 0;
+        var graph = Math.sin(x * 0.3) * 14 + 32;
+        if (Math.abs(y - graph) < 3) return [90, 230, 140];
+        return line ? [10, 26, 16] : [6, 16, 10];
+      }))), cx - 0.3, 0.78, cz - 0.32, 0, 0, 1, 0.85, 0.5, 1, 1));
+      colliders.push({ x0: cx - 1.9, z0: cz - 0.5, x1: cx + 1.9, z1: cz + 0.5 });
+    })();
+    // chairs
+    [[-2.2, -2.2, 0.3], [2.2, -2.0, -0.2]].forEach(function (c) {
+      var matChair = ps1Material(PS1.solidTexture(96, 60, 52));
+      scene.add(cs(boxMesh(matChair, c[0], 0.45, c[1], 0.66, 0.14, 0.62, 1.4)));
+      scene.add(cs(boxMesh(matChair, c[0], 0.75, c[1] + 0.25 + c[2] * 0.3, 0.66, 0.7, 0.12, 1.4, c[2])));
+      [[-0.24, -0.24], [0.24, -0.24], [-0.24, 0.24], [0.24, 0.24]].forEach(function (l) {
+        scene.add(boxMesh(matPanel, c[0] + l[0], 0.2, c[1] + l[1], 0.08, 0.4, 0.08, 2));
+      });
+      colliders.push({ x0: c[0] - 0.4, z0: c[1] - 0.4, x1: c[0] + 0.4, z1: c[1] + 0.4 });
+    });
+    // floor plant + coffee mug on a side table
+    (function () {
+      var matPot2 = ps1Material(PS1.solidTexture(140, 96, 70));
+      scene.add(prismMesh(matPot2, -3.4, 2.6, 0.22, 0.5, 7, 1.6, 0.8));
+      scene.add(blobMesh(ps1Material(PS1.solidTexture(50, 110, 66)), -3.4, 0.85, 2.6, 0.4, 1.1, 0.35, function (sd) { return sd > 0.5 ? [0.9, 1.15, 0.85] : [0.75, 1.0, 0.7]; }));
+      colliders.push({ x0: -3.7, z0: 2.3, x1: -3.1, z1: 2.9 });
+    })();
+    scene.add(boxMesh(matPanel, 3.2, 0.55, 1.8, 0.7, 0.06, 0.7, 1.4));
+    scene.add(prismMesh(matPanel, 3.2, 1.8, 0.12, 0.3, 6, 1.4, 0.6, null, 0.4));
+    scene.add(prismMesh(ps1Material(PS1.solidTexture(235, 235, 240)), 3.2, 1.8, 0.07, 0.12, 6, 1.2, 0.4, null, 0.7));
+    // ceiling light strips
+    scene.add(boxMesh(matStrip, -1.6, 3.05, -1.6, 3.2, 0.08, 0.3, 2, 0, [1.5, 1.5, 1.55]));
+    scene.add(boxMesh(matStrip, 1.6, 3.05, 1.6, 3.2, 0.08, 0.3, 2, 0, [1.5, 1.5, 1.55]));
+    // wall pipes + airlock door on the east wall
+    scene.add(cs(boxMesh(ps1Material(PS1.solidTexture(84, 88, 96)), 4.1, 2.6, -1.0, 0.12, 0.12, 5.2, 1.4)));
+    scene.add(cs(boxMesh(matPanel, 4.12, 1.15, 2.6, 0.12, 2.3, 1.9, 1.2)));
+    scene.add(boxMesh(matStrip, 4.05, 1.15, 2.6, 0.03, 0.5, 0.5, 2, 0, [0.9, 0.5, 0.3]));   // airlock warning
+
+
+    // ---------------- v8 detail pass ------------------------------------
+    // small porthole window on the east wall (round, opens to stars)
+    (function () {
+      var porthole = prismMesh(matPanel, 0, 0, 0.55, 0.14, 10, 2.4, 0.5, null, 0);
+      porthole.rotation.y = Math.PI / 2;
+      porthole.position.set(4.22, 1.9, -1.0);
+      scene.add(porthole);
+      scene.add(boxMesh(matStrip, 4.14, 1.9, -1.0, 0.05, 0.9, 0.9, 2, 0, [0.03, 0.03, 0.04]));   // dark glass inset
+    })();
+    // floating zero-G coffee mug + pen near the window (slow tumble)
+    var floatMug = new THREE.Group();
+    var floatPen = new THREE.Group();
+    (function () {
+      var matMug2 = ps1Material(PS1.solidTexture(225, 228, 235));
+      floatMug.add(prismMesh(matMug2, 0, 0, 0.1, 0.14, 8, 1.4, 0.5, null, 0));
+      floatMug.add(boxMesh(matStrip, 0, -0.02, -0.13, 0.03, 0.1, 0.03, 2));
+      floatMug.position.set(-1.6, 1.9, -4.4);
+      scene.add(floatMug);
+      floatPen.add(boxMesh(ps1Material(PS1.solidTexture(220, 180, 60)), 0, 0, 0, 0.03, 0.03, 0.22, 2));
+      floatPen.position.set(-1.1, 2.2, -4.6);
+      scene.add(floatPen);
+    })();
+    // wall-mounted star chart + locker decal
+    decals.wall(4.165, 2.0, 0.9, true, 1.0, 0.8, PS1.decalMaterial(0.13, 0.22, 0.32, 0.82));
+    decals.wall(-4.165, 1.6, 1.8, true, 0.6, 1.2, PS1.decalMaterial(0.28, 0.3, 0.34, 0.8));
+    // open tool crate with tools
+    (function () {
+      var ox = -3.3, oz = 1.2;
+      scene.add(cs(boxMesh(matPanel, ox, 0.28, oz, 0.9, 0.5, 0.6, 1.4)));
+      var lid = boxMesh(matPanel, ox, 0.56, oz + 0.4, 0.9, 0.07, 0.5, 1.4, -1.15);
+      scene.add(lid);
+      scene.add(boxMesh(matStrip, ox - 0.2, 0.56, oz, 0.3, 0.05, 0.08, 2, 0, [0.8, 0.5, 0.3]));   // wrench hint
+      scene.add(boxMesh(matStrip, ox + 0.15, 0.56, oz, 0.08, 0.05, 0.3, 2, 0, [0.6, 0.62, 0.7]));
+      colliders.push({ x0: ox - 0.5, z0: oz - 0.35, x1: ox + 0.5, z1: oz + 0.75 });
+    })();
+    // oxygen tank rack
+    (function () {
+      var ox2 = 3.4, oz2 = -3.4;
+      scene.add(boxMesh(matPanel, ox2, 0.5, oz2, 0.8, 1.0, 0.3, 1.4));
+      [-0.2, 0.2].forEach(function (o) {
+        var tank = prismMesh(ps1Material(PS1.solidTexture(70, 130, 200)), 0, 0, 0.12, 0.85, 8, 1.4, 1.4, null, 0);
+        tank.rotation.z = Math.PI / 2;
+        tank.position.set(ox2 + o, 1.1, oz2);
+        scene.add(tank);
+      });
+      colliders.push({ x0: ox2 - 0.45, z0: oz2 - 0.2, x1: ox2 + 0.45, z1: oz2 + 0.5 });
+    })();
+    // fire extinguisher + first-aid box by the airlock
+    scene.add(prismMesh(ps1Material(PS1.solidTexture(190, 50, 40)), 3.7, 3.2, 0.14, 0.5, 8, 1.4, 0.8, null, 0.12));
+    scene.add(boxMesh(ps1Material(PS1.solidTexture(240, 240, 240)), 4.1, 1.6, 3.6, 0.12, 0.36, 0.36, 1.4));
+    scene.add(boxMesh(ps1Material(PS1.solidTexture(200, 40, 40)), 4.04, 1.6, 3.6, 0.02, 0.1, 0.26, 2));
+    // flight jacket on a wall hook
+    scene.add(boxMesh(matStrip, -4.12, 1.5, -2.2, 0.05, 0.06, 0.2, 2, 0, [0.5, 0.5, 0.55]));
+    scene.add(boxMesh(ps1Material(PS1.solidTexture(90, 74, 60)), -4.08, 1.2, -2.2, 0.14, 0.6, 0.4, 1.6));
+    // cot with pillow + blanket
+    (function () {
+      var cx3 = -2.8, cz3 = 3.2;
+      scene.add(boxMesh(matPanel, cx3, 0.35, cz3, 1.9, 0.14, 0.85, 1.4));
+      [[-0.8, -0.32], [0.8, -0.32], [-0.8, 0.32], [0.8, 0.32]].forEach(function (l3) {
+        scene.add(boxMesh(matPanel, cx3 + l3[0], 0.16, cz3 + l3[1], 0.07, 0.32, 0.07, 2));
+      });
+      scene.add(boxMesh(ps1Material(PS1.solidTexture(200, 202, 208)), cx3 - 0.6, 0.46, cz3, 0.5, 0.1, 0.55, 1.4));
+      scene.add(boxMesh(ps1Material(PS1.solidTexture(80, 96, 128)), cx3 + 0.3, 0.46, cz3, 1.0, 0.09, 0.7, 1.4));
+      colliders.push({ x0: cx3 - 1.0, z0: cz3 - 0.5, x1: cx3 + 1.0, z1: cz3 + 0.5 });
+    })();
+    // floor cable bundle + hazard stripe decals
+    scene.add(boxMesh(matStrip, 0.4, 0.02, 2.2, 2.6, 0.05, 0.16, 1.4, 0, [0.08, 0.09, 0.1]));
+    decals.path([[0.4, 2.2], [1.4, 0.9], [1.9, -0.6]], 0.2, 0.16, PS1.decalMaterial(0.75, 0.6, 0.1, 0.5), 0.008);
+    decals.rect(0, -4.98, 4.4, 0.3, PS1.decalMaterial(0.75, 0.6, 0.1, 0.5), 0.008);
+    // robot vacuum patrolling the deck
+    var vacuum = new THREE.Group();
+    (function () {
+      vacuum.add(prismMesh(matPanel, 0, 0, 0.22, 0.08, 8, 1.6, 0.4, null, 0));
+      vacuum.add(boxMesh(matStrip, 0, 0.06, 0.2, 0.05, 0.03, 0.05, 2, 0, [0.6, 1.2, 0.7]));
+      vacuum.position.set(-2.0, 0.05, 0.5);
+      scene.add(vacuum);
+    })();
+
+    // dust motes floating in the sun shaft
+    var motes = PS1.makeParticles({
+      mode: 'dust', count: 110, color: [1.0, 0.97, 0.9],
+      size: 0.016, speed: 1, sway: 0.3,
+      area: [-1.2, 2.4, -4.4, -2.6, 2.8]
+    });
+    scene.add(motes);
+
+    return {
+      name: '太空舷窗',
+      scene: scene,
+      colliders: colliders,
+      bounds: { x0: -3.8, x1: 3.8, z0: -5.0, z1: 4.2 },
+      spawn: [0.4, 2.6, Math.atan2(-(-0.6 - 0.4), -(-8.0 - 2.6)), 0.06],
+      idle: { pos: [0.4, 1.55, 2.6], target: [-0.6, 1.7, -8.0] },
+      far: 130,
+      fog: null,
+      noFlicker: true,
+      blobGroup: decals.blobGroup,
+      particles: [motes],
+      update: function (t) {
+        matBlinkR.uniforms.uFlicker.value = (t % 1.4) < 0.9 ? 1 : 0.12;
+        matBlinkG.uniforms.uFlicker.value = (t % 2.3) < 0.5 ? 1 : 0.1;
+        matBlinkA.uniforms.uFlicker.value = 0.5 + 0.5 * Math.sin(t * 3.1);
+        planet.rotation.y = t * 0.01;
+        ring.rotation.z = t * 0.004;
+        sat.position.x = 14 - (t * 0.35) % 28;
+        sat.rotation.y = t * 0.4;
+        floatMug.rotation.x = t * 0.5; floatMug.rotation.z = t * 0.3;
+        floatMug.position.y = 1.9 + 0.14 * Math.sin(t * 0.7);
+        floatPen.rotation.z = t * 0.9;
+        floatPen.position.y = 2.2 + 0.1 * Math.sin(t * 0.55 + 1.2);
+        vacuum.position.x = -3.2 + 2.9 * (0.5 + 0.5 * Math.sin(t * 0.13));
+        vacuum.position.z = 0.5 + 1.6 * Math.sin(t * 0.21);
+        vacuum.rotation.y = Math.atan2(Math.cos(t * 0.13) * 0.4, Math.cos(t * 0.21) * 0.5);
       }
     };
   });
