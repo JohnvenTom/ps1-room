@@ -137,6 +137,7 @@
     'uniform float uFogNear;',
     'uniform float uFogFar;',
     'uniform float uFogOn;',
+    'uniform float uFlash;',
     'varying vec3 vAff;',
     'varying vec2 vUvP;',
     'varying vec3 vCol;',
@@ -183,6 +184,7 @@
     '  c *= mix( dark, 1.0, vis );',
     '  float fogF = uFogOn * smoothstep( uFogNear, uFogFar, vDist );',
     '  c = mix( c, uFogColor, fogF );',
+    '  c += uFlash * vec3( 0.72, 0.78, 1.0 );',
     '  c = clamp(c + (b - 0.5) * (1.5 / 32.0), 0.0, 1.0);',
     '  c = floor(c * 31.0 + 0.5) / 31.0;',
     '  gl_FragColor = vec4(c, 1.0);',
@@ -200,7 +202,8 @@
     uFogNear: { value: 8 },
     uFogFar: { value: 30 },
     uFogOn: { value: 0 },
-    uTime: { value: 0 }
+    uTime: { value: 0 },
+    uFlash: { value: 0 }
   };
   PS1.shared = shared;
 
@@ -216,7 +219,8 @@
       uFogColor: { value: null },
       uFogNear: { value: 1 },
       uFogFar: { value: 1 },
-      uFogOn: { value: 0 }
+      uFogOn: { value: 0 },
+      uFlash: { value: 0 }
     }]);
     u.uMap.value = map;
     u.uBayer = shared.uBayer;
@@ -229,6 +233,7 @@
     u.uFogNear = shared.uFogNear;
     u.uFogFar = shared.uFogFar;
     u.uFogOn = shared.uFogOn;
+    u.uFlash = shared.uFlash;
     return new THREE.ShaderMaterial({
       uniforms: u,
       lights: true,
@@ -453,7 +458,8 @@
       uNebula: { value: new THREE.Vector3().fromArray(cfg.nebula || [0, 0, 0]) },
       uNebAxis: { value: new THREE.Vector3().fromArray(cfg.nebAxis || [0.4, 0.5, 0.6]).normalize() },
       uTime: shared.uTime,
-      uBayer: shared.uBayer
+      uBayer: shared.uBayer,
+      uFlash: shared.uFlash
     };
     var mat = new THREE.ShaderMaterial({
       uniforms: u,
@@ -471,6 +477,7 @@
         'uniform vec3 uSunDir;',
         'uniform float uSunCut, uSunGlow, uStars, uMeteors, uTime;',
         'uniform vec3 uNebula, uNebAxis;',
+        'uniform float uFlash;',
         'uniform sampler2D uBayer;',
         'varying vec3 vDir;',
         'float h31(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }',
@@ -505,6 +512,7 @@
         '    float band2 = pow(max(0.0, 1.0 - abs(dot(d, ax2)) * 3.4), 3.0);',
         '    col += uNebula * (band * 0.22 + band2 * 0.13);',
         '  }',
+        '  col += uFlash * vec3(0.75, 0.8, 1.0);',
         '  float b = texture2D(uBayer, (floor(mod(gl_FragCoord.xy, 4.0)) + 0.5) / 4.0).r;',
         '  col = clamp(col + (b - 0.5) * (1.5 / 32.0), 0.0, 1.0);',
         '  col = floor(col * 31.0 + 0.5) / 31.0;',
@@ -545,14 +553,15 @@
       uArea: { value: new THREE.Vector4(cfg.area[0], cfg.area[1], cfg.area[2], cfg.area[3]) },
       uH: { value: cfg.area[4] },
       uSpeed: { value: cfg.speed || 1 },
-      uSway: { value: cfg.sway || 0.3 }
+      uSway: { value: cfg.sway || 0.3 },
+      uY0: { value: cfg.y0 || 0 }
     };
     var mat = new THREE.ShaderMaterial({
       uniforms: u,
       transparent: false,
       depthWrite: true,
       vertexShader: [
-        'uniform float uTime, uSnap, uSize, uMode, uH, uSpeed, uSway;',
+        'uniform float uTime, uSnap, uSize, uMode, uH, uSpeed, uSway, uY0;',
         'uniform vec2 uRes;',
         'uniform vec4 uArea;',
         'attribute vec3 aSeed;',
@@ -562,16 +571,16 @@
         '  vec3 p;',
         '  float fade = 1.0;',
         '  if (uMode < 0.5) {',                                  // petal
-        '    float y = uH - mod(aSeed.y * uH + uTime * uSpeed, uH);',
+        '    float y = uY0 + uH - mod(aSeed.y * uH + uTime * uSpeed, uH);',
         '    p = vec3(uArea.x + aSeed.x * wx + sin(uTime * 0.9 + aSeed.x * 40.0) * uSway,',
         '             y,',
         '             uArea.z + aSeed.z * wz + cos(uTime * 0.7 + aSeed.z * 30.0) * uSway);',
         '  } else if (uMode < 1.5) {',                           // rain
-        '    float y = uH - mod(aSeed.y * uH + uTime * uSpeed, uH);',
+        '    float y = uY0 + uH - mod(aSeed.y * uH + uTime * uSpeed, uH);',
         '    p = vec3(uArea.x + aSeed.x * wx + y * uSway * 0.25 + uTime * uSway, y,',
         '             uArea.z + aSeed.z * wz);',
         '  } else if (uMode < 2.5) {',                           // steam
-        '    float y = mod(aSeed.y * uH + uTime * uSpeed, uH);',
+        '    float y = uY0 + mod(aSeed.y * uH + uTime * uSpeed, uH);',
         '    p = vec3(uArea.x + aSeed.x * wx + sin(uTime + aSeed.x * 20.0) * y * 0.35, y,',
         '             uArea.z + aSeed.z * wz + cos(uTime * 0.8 + aSeed.z * 17.0) * y * 0.35);',
         '    fade = 1.0 - y / uH;',
@@ -607,6 +616,7 @@
         '    float band2 = pow(max(0.0, 1.0 - abs(dot(d, ax2)) * 3.4), 3.0);',
         '    col += uNebula * (band * 0.22 + band2 * 0.13);',
         '  }',
+        '  col += uFlash * vec3(0.75, 0.8, 1.0);',
         '  float b = texture2D(uBayer, (floor(mod(gl_FragCoord.xy, 4.0)) + 0.5) / 4.0).r;',
         '  if (b > vFade) discard;',
         '  vec3 c = uColor * (0.75 + 0.25 * vFade);',
@@ -663,6 +673,7 @@
         '    float band2 = pow(max(0.0, 1.0 - abs(dot(d, ax2)) * 3.4), 3.0);',
         '    col += uNebula * (band * 0.22 + band2 * 0.13);',
         '  }',
+        '  col += uFlash * vec3(0.75, 0.8, 1.0);',
         '  float b = texture2D(uBayer, (floor(mod(gl_FragCoord.xy, 4.0)) + 0.5) / 4.0).r;',
         '  if (b >= uDens) discard;',
         '  gl_FragColor = vec4(uCol, 1.0);',

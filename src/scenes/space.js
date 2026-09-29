@@ -46,20 +46,36 @@
       return [r * (0.92 + storm * 0.14), g * (0.92 + storm * 0.14), b * (0.92 + storm * 0.14)];
     });
   }
-  function ringCanvas() {
-    return pixelLoop(newCanvas(64), function (x, y) {
-      var band = Math.sin(y * 0.9) * 0.5 + 0.5;
-      var gap = (y > 26 && y < 31) || (y > 44 && y < 47);
-      var a = gap ? 30 : 150 + band * 90;
-      var t = (hash2(x, y) * 2 - 1) * 8;
-      return [a * 0.98 + t, a * 0.9 + t, a * 0.76 + t];
-    });
-  }
+
 
   var deckTex = texFrom(deckCanvas());
   var panelTex = texFrom(panelCanvas());
   var gasGiantTex = texFrom(gasGiantCanvas());
-  var ringTex = texFrom(ringCanvas());
+  // ring texture with the planet's shadow baked in: sun/planet/ring are static,
+  // so the shadow wedge is geometrically exact and costs nothing at runtime.
+  var PLANET_POS = new THREE.Vector3(-8, 8, -70);
+  var SUN_TOWARD = new THREE.Vector3(0.15, 0.35, -0.92).normalize();
+  var RING_MAT4 = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(Math.PI / 2 - 0.42, 0.2, 0));
+  function ringTexel(x, y) {
+    // band recipe identical to the old ringCanvas (canvas-space y)
+    var band = Math.sin(y * 0.9) * 0.5 + 0.5;
+    var gap = (y > 26 && y < 31) || (y > 44 && y < 47);
+    var a0 = gap ? 30 : 150 + band * 90;
+    var t = (hash2(x, y) * 2 - 1) * 8;
+    // world position of this texel: u = x/64 (angle), v = 1 - y/64 (radial)
+    var rad = 19 + (1 - y / 64) * 8;
+    var ang = (x / 64) * Math.PI * 2;
+    var local = new THREE.Vector3(Math.cos(ang) * rad, Math.sin(ang) * rad, 0).applyMatrix4(RING_MAT4).add(PLANET_POS);
+    var toP = new THREE.Vector3().subVectors(PLANET_POS, local);
+    var tproj = toP.dot(SUN_TOWARD);
+    var shade = 1;
+    if (tproj > 0) {
+      var dClose = Math.sqrt(Math.max(0, toP.lengthSq() - tproj * tproj));
+      shade = Math.min(1, 0.34 + (dClose - 15) / 4);   // hard core + soft limb
+    }
+    return [(a0 * 0.98 + t) * shade, (a0 * 0.9 + t) * shade, (a0 * 0.76 + t) * shade];
+  }
+  var ringTex = texFrom(pixelLoop(newCanvas(64), ringTexel));
 
   var matDeck = ps1Material(deckTex);
   var matPanel = ps1Material(panelTex);
@@ -129,7 +145,7 @@
       return mesh;
     }
     var planet = new THREE.Mesh(new THREE.SphereGeometry(16, 18, 12), matGiant);
-    planet.position.set(-8, 8, -70);
+    planet.position.copy(PLANET_POS);
     scene.add(bakeVertexColors(planet));
     var ring = new THREE.Mesh(new THREE.RingGeometry(19, 27, 30, 1), matRing);
     (function () {   // radial UVs: v = (r - inner)/(outer - inner)
@@ -141,12 +157,41 @@
       }
     })();
     ring.position.copy(planet.position);
-    ring.rotation.x = Math.PI / 2 - 0.42;
-    ring.rotation.y = 0.2;
+    ring.rotation.set(Math.PI / 2 - 0.42, 0.2, 0);   // must match RING_MAT4 above: the shadow is baked for this exact orientation
     scene.add(bakeVertexColors(ring));
     var moon = new THREE.Mesh(new THREE.SphereGeometry(2.4, 10, 8), ps1Material(PS1.solidTexture(150, 148, 145)));
     moon.position.set(6, -4, -50);
     scene.add(bakeVertexColors(moon));
+    // tumbling debris belt
+    var matRock = ps1Material(PS1.solidTexture(96, 92, 88));
+    var debris = [];
+    [[18, 5, -38], [-14, -2, -52], [24, -8, -46]].forEach(function (d, di) {
+      var rock = PS1.blobMesh(matRock, 0, 0, 0, 0.7 + di * 0.25, 0.8, 0.45, function (sd) { return [1, 0.96, 0.9]; });
+      rock.position.set(d[0], d[1], d[2]);
+      scene.add(rock);
+      debris.push(rock);
+    });
+    // blue marble planet (surface scrolls under its baked terminator)
+    var marbleTex = texFrom(pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 9, y / 9, 6, 2);
+      if (y < 6 || y > 58) return [220, 228, 238];
+      if (n > 0.58) return [66 + n * 40, 108 + n * 40, 62];
+      return [26 + n * 30, 62 + n * 44, 122 + n * 60];
+    }));
+    var marble = new THREE.Mesh(new THREE.SphereGeometry(3.2, 12, 10), ps1Material(marbleTex));
+    marble.position.set(26, 14, -58);
+    scene.add(bakeVertexColors(marble));
+    // patrolling shuttle (flyby every ~24 s, opposite direction to the cargo sat)
+    var shuttle = new THREE.Group();
+    (function () {
+      var matShuttle = ps1Material(PS1.solidTexture(158, 162, 172));
+      shuttle.add(boxMesh(matShuttle, 0, 0, 0, 1.6, 0.4, 0.5, 1.4));
+      shuttle.add(prismMesh(matShuttle, 0, 0, 0.55, 0.18, 6, 1.4, 0.5, null, -0.18));
+      shuttle.add(boxMesh(matBlinkA, 0.9, 0, 0, 0.12, 0.12, 0.12, 2, 0, [1.4, 1.5, 1.6]));
+      shuttle.scale.set(0.6, 0.6, 0.6);
+      scene.add(shuttle);
+    })();
+
     // drifting cargo satellite (animated)
     var sat = new THREE.Group();
     (function () {
@@ -216,7 +261,7 @@
       colliders.push({ x0: cx - 1.9, z0: cz - 0.5, x1: cx + 1.9, z1: cz + 0.5 });
     })();
     // chairs
-    [[-2.2, -2.2, 0.3], [2.2, -2.0, -0.2]].forEach(function (c) {
+    [[-1.5, -3.15, 0.28], [1.5, -3.15, -0.28]].forEach(function (c) {
       var matChair = ps1Material(PS1.solidTexture(96, 60, 52));
       scene.add(cs(boxMesh(matChair, c[0], 0.45, c[1], 0.66, 0.14, 0.62, 1.4)));
       scene.add(cs(boxMesh(matChair, c[0], 0.75, c[1] + 0.25 + c[2] * 0.3, 0.66, 0.7, 0.12, 1.4, c[2])));
@@ -242,7 +287,12 @@
     [-2.8, 0, 2.8].forEach(function (rz) {
       scene.add(boxMesh(matStrip, 0, 3.05, rz, 7.0, 0.07, 0.26, 2, 0, [1.5, 1.5, 1.55]));
     });
-    scene.add(prismMesh(matBlinkR, 0, 0, 0.14, 0.1, 8, 1.4, 0.4, null, 0).translateX(0).translateY(2.92).translateZ(0.2));
+    var beaconBar = new THREE.Group();
+    beaconBar.position.set(0, 2.88, 0.2);
+    beaconBar.add(prismMesh(matPanel, 0, 0, 0.1, 0.06, 8, 1.2, 0.4));
+    beaconBar.add(boxMesh(matBlinkR, 0.16, 0, 0, 0.3, 0.05, 0.06, 2, 0, [1.7, 0.35, 0.3]));
+    beaconBar.add(boxMesh(matBlinkR, -0.16, 0, 0, 0.3, 0.05, 0.06, 2, 0, [1.7, 0.35, 0.3]));
+    scene.add(beaconBar);
     // wall pipes + airlock door on the east wall
     scene.add(cs(boxMesh(ps1Material(PS1.solidTexture(84, 88, 96)), 4.1, 2.6, -1.0, 0.12, 0.12, 5.2, 1.4)));
     scene.add(cs(boxMesh(matPanel, 4.12, 1.15, 2.6, 0.12, 2.3, 1.9, 1.2)));
@@ -327,6 +377,102 @@
       scene.add(vacuum);
     })();
 
+    // ---------------- v9 layout: holo table as the room's hub ----------------
+    var matHolo = PS1.privateFlicker(ps1Material(PS1.solidTexture(90, 230, 240)));
+    var holoGlobe = new THREE.Group();
+    (function () {
+      var hx = 0.3, hz = 0.6;
+      scene.add(cs(prismMesh(matPanel, hx, hz, 0.55, 0.78, 8, 2.4, 0.9)));
+      scene.add(boxMesh(matStrip, hx, 0.82, hz, 1.7, 0.08, 1.7, 1.2, 0, [0.25, 0.28, 0.34]));
+      holoGlobe.position.set(hx, 1.35, hz);
+      [0, Math.PI / 2, 0.7].forEach(function (ry, ri) {
+        var ring2 = prismMesh(matHolo, 0, 0, 0.36, 0.022, 16, 4.5, 0.3, null, 0);
+        ring2.rotation.x = Math.PI / 2;
+        ring2.rotation.z = ry + (ri === 2 ? 0.5 : 0);
+        holoGlobe.add(ring2);
+      });
+      holoGlobe.add(prismMesh(matHolo, 0, 0, 0.12, 0.2, 8, 1, 0.5, null, -0.1));
+      var holoMoonDot = boxMesh(matHolo, 0.5, 0, 0, 0.06, 0.06, 0.06, 2, 0, [1.5, 1.6, 1.6]);
+      holoGlobe.add(holoMoonDot);
+      scene.add(holoGlobe);
+      decals.rect(hx, hz, 2.0, 2.0, PS1.decalMaterial(0.06, 0.24, 0.28, 0.4), 0.012);
+      colliders.push({ x0: hx - 0.9, z0: hz - 0.9, x1: hx + 0.9, z1: hz + 0.9 });
+    })();
+    // console upgrade: slanted dash + radar screen with a SWEEPING needle + keyboard
+    var radarNeedle = new THREE.Group();
+    (function () {
+      var cx = 0, cz = -4.3;
+      scene.add(cs(quadCorners(matPanel, [cx - 1.7, 0.6, cz - 0.42], [cx + 1.7, 0.6, cz - 0.42], [cx + 1.7, 0.86, cz + 0.02], [cx - 1.7, 0.86, cz + 0.02], 3, 0.5)));
+      scene.add(boxMesh(ps1Material(PS1.solidTexture(28, 30, 34)), cx + 0.6, 0.88, cz - 0.2, 0.6, 0.04, 0.3, 1.4));
+      var radar = ps1Material(texFrom(pixelLoop(newCanvas(64), function (x, y) {
+        var dx = x - 32, dy = y - 32, r = Math.sqrt(dx * dx + dy * dy);
+        if (r > 30) return [8, 14, 10];
+        if (Math.abs(r - 24) < 1 || Math.abs(r - 14) < 1 || Math.abs(r - 5) < 1) return [50, 140, 90];
+        return [6, 16, 10];
+      })));
+      var scr = quadMesh(radar, 0, 0, 0, 0, 0, 1, 0.72, 0.72, 1, 1);
+      scr.rotation.x = -0.5;
+      scr.position.set(cx + 0.55, 0.94, cz - 0.16);
+      scene.add(scr);
+      radarNeedle.position.set(cx + 0.55, 1.0, cz - 0.14);
+      radarNeedle.rotation.x = -0.5;
+      radarNeedle.add(boxMesh(matHolo, 0.17, 0, 0, 0.34, 0.012, 0.02, 2, 0, [1.2, 1.6, 1.5]));
+      scene.add(radarNeedle);
+    })();
+    // airlock on the south wall: wheel + control panel + warning band
+    (function () {
+      scene.add(cs(boxMesh(matPanel, 0, 1.15, 4.5, 1.6, 2.3, 0.16, 1.2)));
+      scene.add(boxMesh(matPanel, 0, 1.15, 4.56, 1.3, 2.0, 0.06, 1.2));
+      var wheel = prismMesh(matStrip, 0, 0, 0.16, 0.05, 8, 1.6, 0.4, null, 0);
+      wheel.rotation.x = Math.PI / 2;
+      wheel.position.set(0, 1.15, 4.62);
+      scene.add(wheel);
+      scene.add(boxMesh(matPanel, 1.15, 1.45, 4.52, 0.34, 0.5, 0.1, 1.4));
+      scene.add(boxMesh(matBlinkG, 1.15, 1.6, 4.46, 0.1, 0.1, 0.04, 2, 0, [1.2, 1.6, 1.2]));
+      decals.wall(0, 2.75, 4.18, false, 1.5, 0.24, PS1.decalMaterial(0.75, 0.6, 0.1, 0.5));
+      colliders.push({ x0: -0.9, z0: 4.2, x1: 0.9, z1: 4.7 });
+    })();
+    // snack machine on the east wall
+    (function () {
+      var sx = 4.0, sz = 0.6;
+      scene.add(cs(boxMesh(matPanel, sx, 0.95, sz, 0.55, 1.9, 0.8, 1.4)));
+      scene.add(boxMesh(matStrip, sx - 0.29, 1.05, sz, 0.03, 1.5, 0.6, 2, 0, [0.95, 1.0, 1.05]));
+      [[-0.15, matBlinkA], [0, matBlinkG], [0.15, matBlinkR]].forEach(function (d) {
+        scene.add(boxMesh(d[1], sx - 0.31, 1.7, sz + d[0], 0.02, 0.06, 0.12, 2, 0, [1.3, 1.3, 1.3]));
+      });
+      colliders.push({ x0: sx - 0.35, z0: sz - 0.45, x1: sx + 0.35, z1: sz + 0.45 });
+    })();
+    // plant wall panel on the east wall
+    (function () {
+      var px = 4.05, pz = -2.4;
+      scene.add(boxMesh(matPanel, px, 1.7, pz, 0.1, 1.3, 1.5, 1.4));
+      for (var pl = 0; pl < 6; pl++) {
+        scene.add(blobMesh(ps1Material(PS1.solidTexture(46 + (pl % 3) * 12, 104 + (pl % 2) * 18, 58)),
+          px - 0.12, 1.32 + Math.floor(pl / 3) * 0.42, pz - 0.5 + (pl % 3) * 0.5, 0.17, 0.9, 0.3,
+          function (sd) { return sd > 0.5 ? [0.85, 1.1, 0.85] : [0.7, 1.0, 0.72]; }));
+      }
+    })();
+    // spacesuit alcove on the west wall
+    (function () {
+      var ax = -4.0, az = -2.8;
+      scene.add(boxMesh(matPanel, ax + 0.15, 1.5, az, 0.5, 3.0, 1.6, 1.2));
+      var matSuit = ps1Material(PS1.solidTexture(228, 230, 234));
+      scene.add(boxMesh(matSuit, ax + 0.18, 0.5, az, 0.34, 1.0, 0.42, 1.4));
+      scene.add(boxMesh(matSuit, ax + 0.18, 1.32, az, 0.46, 0.72, 0.54, 1.4));
+      scene.add(boxMesh(matSuit, ax + 0.18, 1.3, az - 0.36, 0.12, 0.6, 0.12, 1.4, 0.25));
+      scene.add(boxMesh(matSuit, ax + 0.18, 1.3, az + 0.36, 0.12, 0.6, 0.12, 1.4, -0.25));
+      scene.add(prismMesh(matSuit, ax + 0.2, az, 0.17, 0.34, 8, 1.6, 0.6, null, 1.72));
+      scene.add(boxMesh(ps1Material(PS1.solidTexture(212, 164, 54)), ax + 0.02, 1.84, az, 0.04, 0.16, 0.24, 2, 0, [0.9, 0.65, 0.2]));
+      colliders.push({ x0: ax - 0.15, z0: az - 0.55, x1: ax + 0.45, z1: az + 0.55 });
+    })();
+    // O2 rack vent leak (tiny periodic steam wisps)
+    var o2leak = PS1.makeParticles({
+      mode: 'steam', count: 26, color: [0.5, 0.62, 0.72],
+      size: 0.03, speed: 0.7, sway: 0.2,
+      area: [3.1, 3.7, -3.7, -3.1, 1.6]
+    });
+    scene.add(o2leak);
+
     // floor cable gully with grate bars
     scene.add(boxMesh(ps1Material(PS1.solidTexture(30, 32, 38)), 0, 0.004, -0.6, 1.1, 0.02, 7.6, 1.2));
     for (var gb = 0; gb < 13; gb++) {
@@ -352,13 +498,13 @@
       fog: null,
       noFlicker: true,
       blobGroup: decals.blobGroup,
-      particles: [motes],
+      particles: [motes, o2leak],
       update: function (t) {
         matBlinkR.uniforms.uFlicker.value = (t % 1.4) < 0.9 ? 1 : 0.12;
         matBlinkG.uniforms.uFlicker.value = (t % 2.3) < 0.5 ? 1 : 0.1;
         matBlinkA.uniforms.uFlicker.value = 0.5 + 0.5 * Math.sin(t * 3.1);
-        planet.rotation.y = t * 0.01;
-        ring.rotation.z = t * 0.004;
+        gasGiantTex.offset.x = -t * 0.008;   // surface scrolls under the FIXED sun terminator
+        moon.rotation.y = t * 0.02;   // small airless moon: mesh spin reads fine at this size
         sat.position.x = 14 - (t * 0.35) % 28;
         sat.rotation.y = t * 0.4;
         floatMug.rotation.x = t * 0.5; floatMug.rotation.z = t * 0.3;
@@ -368,6 +514,19 @@
         vacuum.position.x = -3.2 + 2.9 * (0.5 + 0.5 * Math.sin(t * 0.13));
         vacuum.position.z = 0.5 + 1.6 * Math.sin(t * 0.21);
         vacuum.rotation.y = Math.atan2(Math.cos(t * 0.13) * 0.4, Math.cos(t * 0.21) * 0.5);
+        matHolo.uniforms.uFlicker.value = 0.75 + 0.25 * Math.sin(t * 6.3) * Math.sin(t * 1.7) + 0.08 * Math.sin(t * 40.0);
+        holoGlobe.rotation.y = t * 0.35;
+        holoGlobe.children[3].position.set(Math.cos(t * 1.4) * 0.5, Math.sin(t * 1.4) * 0.15, Math.sin(t * 1.4) * 0.5);
+        radarNeedle.rotation.z = -t * 1.9;
+        beaconBar.rotation.y = t * 2.6;
+        debris[0].rotation.x = t * 0.5; debris[0].rotation.y = t * 0.3;
+        debris[1].rotation.x = -t * 0.4; debris[1].rotation.z = t * 0.45;
+        debris[2].rotation.y = t * 0.55; debris[2].rotation.x = t * 0.2;
+        marbleTex.offset.x = t * 0.006;
+        var st = (t % 24) / 24;
+        shuttle.position.set(20 - st * 44, 6 + Math.sin(st * 6.0) * 3, -44 + st * 10);
+        shuttle.rotation.z = 0.12 * Math.sin(st * 6.0);
+        shuttle.visible = st > 0.12 && st < 0.9;
       }
     };
   });
