@@ -23,6 +23,10 @@ const appParts = [
   path.join(root, 'src/scenes/skyisles.js'),
   path.join(root, 'src/scenes/colossus.js'),
   path.join(root, 'src/scenes/storm.js'),
+  path.join(root, 'src/scenes/deepsea.js'),
+  path.join(root, 'src/scenes/glacier.js'),
+  path.join(root, 'src/scenes/battlefield.js'),
+  path.join(root, 'src/scenes/worldtree.js'),
   path.join(root, 'src/main.js')
 ];
 const app = appParts

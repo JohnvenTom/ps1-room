@@ -143,6 +143,9 @@
     'varying vec3 vCol;',
     'varying float vDist;',
     // hard point shadow with Bayer-dithered penumbra (depth window ~6cm world)
+    // (cubeToUV only exists when point-light shadows are compiled in - guard the
+    //  whole helper or zero-shadow scenes fail to link)
+    '#if defined( USE_SHADOWMAP ) && NUM_POINT_LIGHT_SHADOWS > 0',
     'float psPointShadow( sampler2D smap, vec2 mapSize, float bias, vec4 sc, float cnear, float cfar, float bayer ) {',
     '  vec3 l2p = sc.xyz;',
     '  float bd3 = length( l2p );',
@@ -153,6 +156,7 @@
     '  float soft = clamp( ( stored - dp ) / 0.006, 0.0, 1.0 );',
     '  return soft > bayer ? 1.0 : 0.0;',
     '}',
+    '#endif',
     // hard directional (sun/moon) shadow, same Bayer penumbra language.
     // bias convention matches psPointShadow: negative bias favour the lit side,
     // so the fragment depth is offset by -bias before the comparison.
@@ -455,6 +459,7 @@
       uSunGlow: { value: cfg.sunGlow || 0 },
       uStars: { value: cfg.stars || 0 },
       uMeteors: { value: cfg.meteors || 0 },
+      uAurora: { value: cfg.aurora || 0 },
       uNebula: { value: new THREE.Vector3().fromArray(cfg.nebula || [0, 0, 0]) },
       uNebAxis: { value: new THREE.Vector3().fromArray(cfg.nebAxis || [0.4, 0.5, 0.6]).normalize() },
       uTime: shared.uTime,
@@ -475,7 +480,7 @@
       fragmentShader: [
         'uniform vec3 uTop, uHorizon, uBottom, uSunCol;',
         'uniform vec3 uSunDir;',
-        'uniform float uSunCut, uSunGlow, uStars, uMeteors, uTime;',
+        'uniform float uSunCut, uSunGlow, uStars, uMeteors, uTime, uAurora;',
         'uniform vec3 uNebula, uNebAxis;',
         'uniform float uFlash;',
         'uniform sampler2D uBayer;',
@@ -505,6 +510,15 @@
         '      float dv = d.y - (mv - 0.22 * p);',
         '      col += vec3(0.85, 0.9, 1.0) * exp(-(du*du + dv*dv) * 700.0) * (1.0 - p) * uMeteors * step(0.15, d.y);',
         '    }',
+        '  }',
+        '  if (uAurora > 0.0) {',
+        '    float az = atan(d.z, d.x);',
+        '    float curt = 0.5 + 0.5 * sin(az * 3.0 + uTime * 0.10 + sin(az * 5.0 - uTime * 0.13 + d.y * 2.0) * 1.1);',
+        '    curt *= 0.6 + 0.4 * sin(az * 17.0 + uTime * 0.35 + sin(d.y * 9.0) * 2.0);',
+        '    float v = smoothstep(0.06, 0.30, d.y) * (1.0 - smoothstep(0.55, 0.95, d.y));',
+        '    float a = pow(curt, 2.2) * v * uAurora;',
+        '    vec3 aco = mix(vec3(0.10, 0.85, 0.45), vec3(0.45, 0.25, 0.65), smoothstep(0.15, 0.75, d.y));',
+        '    col += aco * a * 1.55 + vec3(0.05, 0.30, 0.25) * a * 0.8;',
         '  }',
         '  if (uNebula.r + uNebula.g + uNebula.b > 0.001) {',
         '    vec3 ax2 = normalize(cross(uNebAxis, vec3(0.3, 0.8, 0.5)));',
