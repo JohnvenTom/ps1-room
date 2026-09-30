@@ -7594,6 +7594,1186 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 })();
 
 ;
+(function () {
+  'use strict';
+  // ======================= 彩窗大教堂 ==============================
+  var texFrom = PS1.texFrom, pixelLoop = PS1.pixelLoop, newCanvas = PS1.newCanvas;
+  var hash2 = PS1.hash2, vnoise = PS1.vnoise;
+  var boxMesh = PS1.boxMesh, prismMesh = PS1.prismMesh;
+  var quadCorners = PS1.quadCorners, blobMesh = PS1.blobMesh;
+  var cs = PS1.cs, setRelight = PS1.setRelight;
+  var ps1Material = PS1.ps1Material;
+
+  function stoneCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 7, y / 7, 6, 3);
+      var block = (Math.floor(y / 16) % 2 === 0) ? 0 : 6;
+      var mortar = (y % 16 < 1.5 || (x + block) % 32 < 1.5);
+      var r = 96 + n * 30, g = 92 + n * 28, b = 86 + n * 26;
+      if (mortar) { r *= 0.72; g *= 0.72; b *= 0.72; }
+      return [r, g, b];
+    });
+  }
+  function woodCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var grain = Math.sin(x * 0.55 + vnoise(x / 5, y / 18, 5, 2) * 4) * 0.5 + 0.5;
+      var n = vnoise(x / 6, y / 14, 5, 2);
+      var r = 74 + grain * 34 + n * 14, g = 50 + grain * 24 + n * 10, b = 32 + grain * 16 + n * 8;
+      return [r, g, b];
+    });
+  }
+  function glassCanvas(hue) {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var lead = (x % 16 < 2 || y % 21 < 2);                       // lead came grid
+      var n = vnoise(x / 5, y / 5, 5, 2);
+      var k = 0.7 + n * 0.6;
+      var r = hue[0] * k, g = hue[1] * k, b = hue[2] * k;
+      if (lead) { r = 18; g = 18; b = 20; }
+      if (vnoise(x / 9 + 3, y / 9, 4, 2) > 0.74) { r *= 1.35; g *= 1.35; b *= 1.35; }   // jewel highlights
+      return [Math.min(255, r), Math.min(255, g), Math.min(255, b)];
+    });
+  }
+
+  var stoneTex = texFrom(stoneCanvas());
+  var woodTex = texFrom(woodCanvas());
+  var matStone = ps1Material(stoneTex);
+  var matWood = ps1Material(woodTex);
+  var matGold = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 214, 120)));    // altar gold
+  var matCandle = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 196, 96)));   // candle flame
+
+  // the six aisle windows: hue per window, light pools on the floor echo them
+  var WINDOWS = [
+    { p: [-9.4, 5.2, -6], hue: [90, 190, 255], pool: [-6.2, -4.4] },
+    { p: [-9.4, 5.2, -14], hue: [255, 120, 90], pool: [-6.2, -12.4] },
+    { p: [9.4, 5.2, -6], hue: [255, 200, 90], pool: [6.2, -4.4] },
+    { p: [9.4, 5.2, -14], hue: [140, 255, 160], pool: [6.2, -12.4] },
+    { p: [-9.4, 5.2, -22], hue: [200, 130, 255], pool: [-6.2, -20.4] },
+    { p: [9.4, 5.2, -22], hue: [255, 160, 220], pool: [6.2, -20.4] }
+  ];
+  var LAMP = [0, 5.4, -13];    // chandelier crown position
+
+  var cathedralRelight = function (x, y, z, nx, ny, nz) {
+    var hemi = 0.5 + 0.5 * ny;
+    var r = 0.10 + 0.05 * hemi, g = 0.10 + 0.05 * hemi, b = 0.12 + 0.06 * hemi;
+    for (var i = 0; i < WINDOWS.length; i++) {                    // cool tint from each window
+      var w = WINDOWS[i];
+      var dx = w.p[0] - x, dy = w.p[1] - y, dz = w.p[2] - z;
+      var d2 = dx * dx + dy * dy + dz * dz;
+      var fall = 0.5 / (1 + d2 * 0.02);
+      var nd = Math.max(0, (dx * nx + dy * ny + dz * nz) / (Math.sqrt(d2) + 1e-4));
+      var ww = fall * (0.35 + 0.65 * nd);
+      r += ww * w.hue[0] / 255 * 0.35; g += ww * w.hue[1] / 255 * 0.35; b += ww * w.hue[2] / 255 * 0.35;
+    }
+    var dx = LAMP[0] - x, dy = LAMP[1] - y, dz = LAMP[2] - z;
+    var d2 = dx * dx + dy * dy + dz * dz;
+    var fall = 3.0 / (1 + d2 * 0.026);
+    var nd = Math.max(0, (dx * nx + dy * ny + dz * nz) / (Math.sqrt(d2) + 1e-4));
+    var w = fall * (0.4 + 0.6 * nd);
+    r += w * 1.1; g += w * 0.85; b += w * 0.5;
+    return [Math.min(1.15, r), Math.min(1.1, g), Math.min(1.05, b)];
+  };
+
+  PS1.registerScene(function () {
+    setRelight(cathedralRelight);
+    var scene = new THREE.Scene();
+    var decals = PS1.newDecalSet();
+    var colliders = [];
+
+    var lamp = new THREE.PointLight(0xffd9a0, 1);
+    lamp.position.set(LAMP[0], LAMP[1], LAMP[2]);
+    lamp.castShadow = true;
+    lamp.shadow.mapSize.set(256, 256);
+    lamp.shadow.camera.near = 0.2; lamp.shadow.camera.far = 13;
+    scene.add(lamp); scene.add(lamp.target);
+
+    scene.add(PS1.makeSky({
+      top: [0.02, 0.02, 0.04], horizon: [0.05, 0.05, 0.08], bottom: [0.02, 0.02, 0.03],
+      sunDir: [0.3, 0.8, 0.4], sunCol: [0, 0, 0], stars: 0, meteors: 0, radius: 60
+    }));
+
+    // ---------------- the shell: nave 19 x 9 x 34 ------------------------
+    var W2 = 9.5, H = 11, Z0 = 3, Z1 = -30;
+    scene.add(PS1.groundGrid(matStone, 0, -13.5, 19, 34, 9, 2, 0, 1));
+    scene.add(cs(quadCorners(matStone, [-W2, 0, Z0], [W2, 0, Z0], [W2, H, Z0], [-W2, H, Z0], 5, 3)));
+    scene.add(cs(quadCorners(matStone, [-W2, 0, Z1], [W2, 0, Z1], [W2, H, Z1], [-W2, H, Z1], 5, 3)));   // apse wall (rose window covers centre)
+    scene.add(cs(quadCorners(matStone, [-W2, 0, Z0], [-W2, 0, Z1], [-W2, H, Z1], [-W2, H, Z0], 8, 3)));
+    scene.add(cs(quadCorners(matStone, [W2, 0, Z0], [W2, 0, Z1], [W2, H, Z1], [W2, H, Z0], 8, 3)));
+    scene.add(cs(quadCorners(matStone, [-W2, H, Z0], [W2, H, Z0], [W2, H, Z1], [-W2, H, Z1], 5, 8)));   // vault ceiling
+    // ceiling ribs + transverse arches
+    for (var zc = Z0 - 2; zc > Z1; zc -= 4) {
+      scene.add(cs(boxMesh(matStone, -3.4, H - 0.5, zc, 0.5, 1.0, 0.5, 1.5)));
+      scene.add(cs(boxMesh(matStone, 3.4, H - 0.5, zc, 0.5, 1.0, 0.5, 1.5)));
+      scene.add(cs(quadCorners(matStone, [-3.6, H - 0.9, zc], [3.6, H - 0.9, zc], [3.6, H - 0.2, zc - 0.6], [-3.6, H - 0.2, zc - 0.6], 2, 0.5)));
+    }
+    // aisle colonnade
+    for (var col = Z0 - 2; col > Z1 + 2; col -= 4) {
+      [-5.8, 5.8].forEach(function (cx) {
+        scene.add(cs(prismMesh(matStone, cx, col, 0.55, 8.4, 8, 1.6, 6, null, 0)));
+        scene.add(prismMesh(matStone, cx, col, 0.72, 0.5, 8, 1.9, 0.6, null, 0));
+        scene.add(prismMesh(matStone, cx, col, 0.68, 0.55, 8, 1.8, 0.7, null, 8.4));
+        colliders.push({ x0: cx - 0.8, z0: col - 0.8, x1: cx + 0.8, z1: col + 0.8 });
+      });
+      scene.add(cs(boxMesh(matStone, 0, 8.7, col, 11.2, 0.5, 0.6, 3)));   // architrave beam
+    }
+
+    // ---------------- stained glass + rose window -------------------------
+    WINDOWS.forEach(function (w, wi) {
+      var matGlass = ps1Material(texFrom(glassCanvas(w.hue)));
+      var sx = w.p[0] < 0 ? -W2 + 0.06 : W2 - 0.06;
+      var nrm = w.p[0] < 0 ? 1 : -1;
+      scene.add(quadCorners(matGlass,
+        [sx, 1.4, w.p[2] - 1.7], [sx, 1.4, w.p[2] + 1.7], [sx, 6.4, w.p[2] + 1.7], [sx, 6.4, w.p[2] - 1.7], 2, 2));
+      // pointed arch top
+      scene.add(quadCorners(matGlass,
+        [sx, 6.4, w.p[2] - 1.7], [sx, 6.4, w.p[2] + 1.7], [sx, 8.6, w.p[2]], [sx, 8.6, w.p[2]], 2, 1));
+      void nrm;
+      // coloured light pool on the floor, angled from the window
+      var poolMat = PS1.decalMaterial(w.hue[0] / 255, w.hue[1] / 255, w.hue[2] / 255, 0.55, 1.1);
+      decals.rect(w.pool[0], w.pool[1], 3.6, 5.4, poolMat, 0.02, w.p[0] < 0 ? 0.5 : -0.5);
+    });
+    // rose window on the apse wall
+    (function () {
+      var roseMat = ps1Material(texFrom(glassCanvas([255, 170, 90])));
+      var cx = 0, cy = 7.4, cz = Z1 + 0.08;
+      for (var rp = 0; rp < 12; rp++) {
+        var a = rp / 12 * Math.PI * 2;
+        var px = cx + Math.cos(a) * 2.2, py = cy + Math.sin(a) * 2.2;
+        scene.add(quadCorners(roseMat, [px - 0.5, py - 0.5, cz], [px + 0.5, py - 0.5, cz], [px + 0.5, py + 0.5, cz], [px - 0.5, py + 0.5, cz], 1, 1));
+      }
+      scene.add(quadCorners(roseMat, [cx - 1.0, cy - 1.0, cz], [cx + 1.0, cy - 1.0, cz], [cx + 1.0, cy + 1.0, cz], [cx - 1.0, cy + 1.0, cz], 1, 1));
+    })();
+
+    // ---------------- altar + chancel --------------------------------------
+    (function () {
+      scene.add(cs(boxMesh(matStone, 0, 0.4, -27.5, 4.4, 0.8, 1.6, 2)));
+      scene.add(boxMesh(matGold, 0, 1.05, -27.5, 1.5, 0.5, 0.9, 1.6, 0, [1.5, 1.15, 0.55]));
+      colliders.push({ x0: -2.4, z0: -28.4, x1: 2.4, z1: -26.6 });
+      // reredos panels
+      [[-3.1, -29.4], [3.1, -29.4]].forEach(function (rr) {
+        scene.add(cs(boxMesh(matGold, rr[0], 2.6, rr[1], 1.5, 4.4, 0.3, 1.5, 0, [0.6, 0.5, 0.28])));
+      });
+      // organ pipes flank BOTH sides of the apse
+      for (var op = 0; op < 7; op++) {
+        var ph2 = 2.2 + Math.abs(3 - op) * 0.9 + hash2(op, 5) * 0.7;
+        scene.add(cs(prismMesh(matGold, -6.8 + op * 0.62, -28.8, 0.22, ph2, 6, 0.5, ph2, null, 9.6)));
+        scene.add(cs(prismMesh(matGold, 6.8 - op * 0.62, -28.8, 0.22, 2.0 + Math.abs(3 - op) * 0.8 + hash2(op, 9) * 0.7, 6, 0.5, 2.4, null, 9.6)));
+      }
+      // candle banks on the altar steps
+      [[-1.6, -26.6], [1.6, -26.6], [-0.8, -26.2], [0.8, -26.2]].forEach(function (cd) {
+        scene.add(prismMesh(matWood, cd[0], cd[1], 0.06, 0.5, 6, 0.4, 0.5, null, 0.8));
+        scene.add(boxMesh(matCandle, cd[0], 1.5, cd[1], 0.14, 0.3, 0.14, 1, 0, [1.8, 1.35, 0.6]));
+      });
+    })();
+
+    // ---------------- pews + chandelier + censer ---------------------------
+    for (var pz = -2; pz > -21; pz -= 1.8) {
+      [-3.2, 3.2].forEach(function (px) {
+        scene.add(cs(boxMesh(matWood, px, 0.45, pz, 5.2, 0.16, 0.6, 2.5)));
+        scene.add(cs(boxMesh(matWood, px, 0.8, pz + 0.22, 5.2, 0.7, 0.1, 2.5)));   // backrest
+        scene.add(boxMesh(matWood, px, 0.22, pz, 4.9, 0.44, 0.5, 2.5));
+      });
+      colliders.push({ x0: -5.9, z0: pz - 0.35, x1: -0.5, z1: pz + 0.35 });
+      colliders.push({ x0: 0.5, z0: pz - 0.35, x1: 5.9, z1: pz + 0.35 });
+    }
+    // chandelier crown: ring + candles + hanging chains
+    var chandelier = new THREE.Group();
+    (function () {
+      chandelier.position.set(LAMP[0], LAMP[1], LAMP[2]);
+      var ring = prismMesh(matGold, 0, 0, 1.1, 0.16, 10, 2.4, 0.4, null, 0);
+      chandelier.add(ring);
+      for (var cc = 0; cc < 8; cc++) {
+        var ca = cc / 8 * Math.PI * 2;
+        var cxx = Math.cos(ca) * 1.1, czz = Math.sin(ca) * 1.1;
+        var st2 = prismMesh(matWood, 0, 0, 0.05, 0.42, 5, 0.4, 0.5, null, 0);
+        st2.position.set(cxx, 0.2, czz);
+        chandelier.add(st2);
+        var flame = boxMesh(matCandle, 0, 0, 0, 0.11, 0.26, 0.11, 1, 0, [1.9, 1.4, 0.62]);
+        flame.position.set(cxx, 0.62, czz);
+        chandelier.add(flame);
+      }
+      for (var ch = 0; ch < 3; ch++) {
+        var cha = ch / 3 * Math.PI * 2;
+        var chain = prismMesh(matWood, 0, 0, 0.03, 4.7, 4, 0.3, 3.2, null, 0);
+        chain.position.set(Math.cos(cha) * 0.9, 1.4, Math.sin(cha) * 0.9);
+        chain.rotation.z = Math.cos(cha) * 0.32;
+        chandelier.add(chain);
+      }
+      scene.add(chandelier);
+    })();
+    // swinging censer on the chancel arch
+    var censer = new THREE.Group();
+    (function () {
+      var cx0 = 0, cz0 = -23.5;
+      scene.add(prismMesh(matWood, cx0, cz0, 0.035, 4.2, 4, 0.3, 3, null, 8.8));
+      censer.position.set(cx0, 5.4, cz0);
+      censer.add(prismMesh(matGold, 0, 0, 0.22, 0.5, 6, 0.8, 0.5, null, -0.4));
+      scene.add(censer);
+    })();
+    var smoke = PS1.makeParticles({
+      mode: 'steam', count: 60, color: [0.75, 0.75, 0.78],
+      size: 0.045, speed: 0.7, sway: 0.5,
+      area: [-0.4, 0.4, -24.4, -22.8, 2.6], y0: 4.8
+    });
+    var motes = PS1.makeParticles({
+      mode: 'dust', count: 260, color: [0.9, 0.85, 0.7],
+      size: 0.014, speed: 0.25, sway: 0.45,
+      area: [-8, 8, -26, 2, 8.6], y0: 0.4
+    });
+    scene.add(smoke); scene.add(motes);
+    // banners on the aisle pillars
+    var banners = [];
+    [[-5.8, -10], [5.8, -10], [-5.8, -18], [5.8, -18]].forEach(function (bp) {
+      var pivot = new THREE.Group();
+      pivot.position.set(bp[0], 7.0, bp[1]);
+      pivot.add(quadCorners(matWood, [-0.55, 0, -0.01], [0.55, 0, -0.01], [0.55, -2.8, -0.01], [-0.55, -2.8, -0.01], 1, 2));
+      scene.add(pivot);
+      banners.push(pivot);
+    });
+    // doves nesting on the architrave, one occasionally flies the nave
+    var dove = new THREE.Group();
+    (function () {
+      var db = boxMesh(matWood, 0, 0, 0, 0.14, 0.24, 0.1, 1);
+      var dw1 = boxMesh(matWood, 0, 0.05, 0, 0.3, 0.04, 0.09, 1); dw1.position.x = 0.16;
+      var dw2 = boxMesh(matWood, 0, 0.05, 0, 0.3, 0.04, 0.09, 1); dw2.position.x = -0.16;
+      dove.add(db); dove.add(dw1); dove.add(dw2);
+      dove.userData = { wings: [dw1, dw2] };
+      scene.add(dove);
+    })();
+
+    return {
+      name: '彩窗大教堂',
+      scene: scene,
+      colliders: colliders,
+      bounds: { x0: -4.9, x1: 4.9, z0: -25.2, z1: 1.8 },
+      spawn: [0.0, 1.4, 0.0, 0.0],
+      idle: { pos: [0.0, 2.2, 1.2], target: [0.0, 5.8, -28.0] },   // straight down the nave: pews, chandelier, altar, rose window
+      fog: { color: [0.03, 0.03, 0.05], near: 16, far: 52 },
+      noFlicker: true,
+      blobGroup: decals.blobGroup,
+      particles: [smoke, motes],
+      update: function (t) {
+        matCandle.uniforms.uFlicker.value = 0.86 + 0.14 * Math.abs(Math.sin(t * 9.0) * Math.sin(t * 2.3));
+        matGold.uniforms.uFlicker.value = 0.95 + 0.05 * Math.sin(t * 3.1);
+        lamp.intensity = 0.94 + 0.06 * Math.sin(t * 8.6) * Math.sin(t * 2.1);
+        chandelier.rotation.y = 0.03 * Math.sin(t * 0.4);            // slow draft drift
+        censer.rotation.z = 0.55 * Math.sin(t * 0.9);                // pendulum swing
+        censer.position.x = 0 + 1.4 * Math.sin(t * 0.9) * 0.39;      // arc of the swing
+        banners.forEach(function (b, i) {
+          b.rotation.x = 0.06 * Math.sin(t * 1.1 + i * 1.4);
+          b.rotation.z = 0.04 * Math.sin(t * 0.8 + i * 2.2);
+        });
+        // the dove: perches on a beam, every ~14 s it flies a slow loop down the nave
+        var cyc = t % 14;
+        if (cyc < 9) {
+          dove.position.set(3.1, 9.0, -14 + Math.sin(t * 0.5) * 0.2);
+          dove.rotation.y = Math.PI / 2;
+          dove.userData.wings[0].rotation.z = 0;
+          dove.userData.wings[1].rotation.z = 0;
+        } else {
+          var f = (cyc - 9) / 5;
+          dove.position.set(3.1 - 6.6 * Math.sin(f * Math.PI), 9.0 - 5.2 * Math.sin(f * Math.PI), -14 - 10 * f);
+          dove.rotation.y = Math.PI / 2 + f * 0.9;
+          var flap = Math.sin(t * 14) * 0.7;
+          dove.userData.wings[0].rotation.z = flap;
+          dove.userData.wings[1].rotation.z = -flap;
+        }
+      }
+    };
+  });
+})();
+
+;
+(function () {
+  'use strict';
+  // ======================= 午夜列车 ==============================
+  var texFrom = PS1.texFrom, pixelLoop = PS1.pixelLoop, newCanvas = PS1.newCanvas;
+  var hash2 = PS1.hash2, vnoise = PS1.vnoise;
+  var boxMesh = PS1.boxMesh, prismMesh = PS1.prismMesh;
+  var quadCorners = PS1.quadCorners, blobMesh = PS1.blobMesh;
+  var cs = PS1.cs, setRelight = PS1.setRelight;
+  var ps1Material = PS1.ps1Material;
+
+  function wallCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 8, y / 8, 5, 2);
+      var seam = (x % 32 < 1.2);
+      var r = 96 + n * 26, g = 88 + n * 24, b = 78 + n * 20;
+      if (y < 6) { r *= 1.12; g *= 1.1; b *= 1.0; }                 // trim strip
+      if (y > 56) { r *= 0.7; g *= 0.7; b *= 0.72; }                // scuffed skirt
+      if (seam) { r *= 0.8; g *= 0.8; b *= 0.8; }
+      return [r, g, b];
+    });
+  }
+  function seatCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 6, y / 6, 5, 3);
+      var weave = Math.sin(x * 1.7) * Math.sin(y * 1.7) * 0.5 + 0.5;
+      var r = 64 + n * 22 + weave * 12, g = 40 + n * 16 + weave * 8, b = 46 + n * 16 + weave * 9;
+      if (y > 50 && hash2(x, y) < 0.05) { r += 50; g += 40; b += 30; }   // worn patches
+      return [r, g, b];
+    });
+  }
+  function floorCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 9, y / 9, 4, 2);
+      var plank = (Math.floor(x / 21) % 2 === 0) ? 3 : -3;
+      var r = 52 + n * 14 + plank, g = 40 + n * 12 + plank, b = 36 + n * 10 + plank;
+      return [r, g, b];
+    });
+  }
+  // the world outside: night city strip - windows, poles, station lights
+  function outsideCanvas() {
+    return pixelLoop(newCanvas(128), function (x, y) {
+      var n = vnoise(x / 10, y / 12, 5, 2);
+      var r = 10 + n * 8, g = 12 + n * 9, b = 16 + n * 11;
+      var building = Math.floor(x / 14);
+      var lit = hash2(building, Math.floor(y / 8));
+      if (y > 14 && y < 46 && x % 14 > 2 && x % 14 < 11 && lit > 0.62) {
+        var warm = hash2(building * 3, Math.floor(y / 8) * 7);
+        r += 90 + warm * 120; g += 70 + warm * 95; b += 40 + warm * 50;   // apartment windows
+      }
+      if (Math.abs(y - 54) < 1 && x % 40 < 2) { r += 160; g += 150; b += 110; }   // pole lights
+      if (y > 60) { r = 18 + n * 6; g = 16 + n * 5; b = 18 + n * 6; }     // ground rush
+      return [r, g, b];
+    });
+  }
+
+  var wallTex = texFrom(wallCanvas());
+  var seatTex = texFrom(seatCanvas());
+  var floorTex = texFrom(floorCanvas());
+  var outTex = texFrom(outsideCanvas());
+
+  var matWall = ps1Material(wallTex);
+  var matSeat = ps1Material(seatTex);
+  var matFloor = ps1Material(floorTex);
+  var matOut = ps1Material(outTex);
+  var matLampShade = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 226, 160)));
+  var matDoorLight = PS1.privateFlicker(ps1Material(PS1.solidTexture(200, 230, 255)));
+
+  var LAMPS = [[-1.15, 2.5, -5.6], [1.15, 2.5, -5.6], [-1.15, 2.5, 0], [1.15, 2.5, 0], [-1.15, 2.5, 5.6], [1.15, 2.5, 5.6]];
+
+  var trainRelight = function (x, y, z, nx, ny, nz) {
+    var hemi = 0.5 + 0.5 * ny;
+    var r = 0.10 + 0.04 * hemi, g = 0.10 + 0.04 * hemi, b = 0.12 + 0.05 * hemi;
+    for (var i = 0; i < LAMPS.length; i++) {
+      var lp = LAMPS[i];
+      var dx = lp[0] - x, dy = lp[1] - y, dz = lp[2] - z;
+      var d2 = dx * dx + dy * dy + dz * dz;
+      var fall = 1.35 / (1 + d2 * 0.10);
+      var nd = Math.max(0, (dx * nx + dy * ny + dz * nz) / (Math.sqrt(d2) + 1e-4));
+      var w = fall * (0.4 + 0.6 * nd);
+      r += w * 1.15; g += w * 0.95; b += w * 0.6;
+    }
+    return [Math.min(1.15, r), Math.min(1.1, g), Math.min(1.05, b)];
+  };
+
+  PS1.registerScene(function () {
+    setRelight(trainRelight);
+    var scene = new THREE.Scene();
+    var decals = PS1.newDecalSet();
+    var colliders = [];
+
+    var lamp = new THREE.PointLight(0xffe0b0, 0.9);
+    lamp.position.set(0, 2.5, 0);
+    lamp.castShadow = true;
+    lamp.shadow.mapSize.set(256, 256);
+    lamp.shadow.camera.near = 0.15; lamp.shadow.camera.far = 9;
+    scene.add(lamp); scene.add(lamp.target);
+
+    scene.add(PS1.makeSky({
+      top: [0.01, 0.02, 0.04], horizon: [0.04, 0.05, 0.08], bottom: [0.01, 0.01, 0.02],
+      sunDir: [0, 1, 0], sunCol: [0, 0, 0], stars: 0, meteors: 0, radius: 60
+    }));
+
+    // ---------------- carriage shell: 2.6 wide x 3.1 high x 18 long ------
+    var W2 = 1.35, H = 3.1, ZA = 9, ZB = -9;
+    scene.add(PS1.groundGrid(matFloor, 0, 0, 2.8, 18.4, 8, 2, 0, 1));
+    scene.add(cs(quadCorners(matWall, [-W2, 0, ZA], [W2, 0, ZA], [W2, H, ZA], [-W2, H, ZA], 3, 1.5)));
+    scene.add(cs(quadCorners(matWall, [-W2, 0, ZB], [W2, 0, ZB], [W2, H, ZB], [-W2, H, ZB], 3, 1.5)));
+    scene.add(cs(quadCorners(matWall, [-W2, H, ZA], [W2, H, ZA], [W2, H, ZB], [-W2, H, ZB], 3, 6)));   // ceiling
+    // window band: glass + frames on both sides, then the scrolling world outside
+    var winY0 = 1.1, winY1 = 2.4;
+    [-1, 1].forEach(function (side) {
+      var wx = side * W2;
+      for (var wz = ZA - 1.2; wz > ZB + 1.2; wz -= 2.2) {
+        // glass (dark, faintly reflective) with frame
+        scene.add(quadCorners(matWall, [wx, winY0, wz - 0.8], [wx, winY0, wz + 0.8], [wx, winY1, wz + 0.8], [wx, winY1, wz - 0.8], 1, 1));
+        scene.add(boxMesh(matWall, wx, (winY0 + winY1) / 2, wz - 0.84, 0.06, 1.44, 0.08, 1.2));
+        scene.add(boxMesh(matWall, wx, (winY0 + winY1) / 2, wz + 0.84, 0.06, 1.44, 0.08, 1.2));
+      }
+      scene.add(boxMesh(matWall, wx, winY0 - 0.06, (ZA + ZB) / 2, 0.08, 0.1, 17.6, 6));
+      scene.add(boxMesh(matWall, wx, winY1 + 0.06, (ZA + ZB) / 2, 0.08, 0.1, 17.6, 6));
+      // lower wall panels between windows and floor
+      scene.add(cs(quadCorners(matWall, [wx, 0.06, ZA - 0.9], [wx, 0.06, ZB + 0.9], [wx, winY0, ZB + 0.9], [wx, winY0, ZA - 0.9], 7, 1)));
+      // upper wall band above windows
+      scene.add(cs(quadCorners(matWall, [wx, winY1 + 0.1, ZA - 0.9], [wx, winY1 + 0.1, ZB + 0.9], [wx, H - 0.1, ZB + 0.9], [wx, H - 0.1, ZA - 0.9], 7, 1)));
+    });
+    // the scrolling outside world (both sides, far enough for parallax)
+    var outsideL = quadCorners(matOut, [-6.5, -0.4, 26], [-6.5, -0.4, -26], [-6.5, 6.2, -26], [-6.5, 6.2, 26], 6, 2);
+    var outsideR = quadCorners(matOut, [6.5, -0.4, 26], [6.5, -0.4, -26], [6.5, 6.2, -26], [6.5, 6.2, 26], 6, 2);
+    scene.add(outsideL); scene.add(outsideR);
+
+    // ---------------- seats: facing pairs down both sides -----------------
+    for (var sz = 7; sz >= -7; sz -= 2.3) {
+      [-1, 1].forEach(function (side) {
+        var sx = side * 0.92;
+        scene.add(cs(boxMesh(matSeat, sx, 0.5, sz, 1.0, 0.18, 1.0, 1.6)));
+        scene.add(cs(boxMesh(matSeat, sx, 0.86, sz - 0.42 * side, 1.0, 0.75, 0.14, 1.6)));   // backrest faces aisle
+        scene.add(boxMesh(matSeat, sx, 0.25, sz, 0.85, 0.5, 0.85, 1.5));
+        colliders.push({ x0: sx - 0.55, z0: sz - 0.55, x1: sx + 0.55, z1: sz + 0.55 });
+        // headrest cushion
+        scene.add(boxMesh(matSeat, sx, 1.16, sz - 0.46 * side, 0.9, 0.16, 0.12, 1.4));
+      });
+    }
+    // one occupied table seat: fold-down table, coffee cup with steam, book
+    (function () {
+      scene.add(boxMesh(matWall, 0.92, 0.98, 3.4, 0.55, 0.06, 0.8, 1.4));
+      scene.add(prismMesh(matWall, 0.92, 3.4, 0.09, 0.13, 7, 0.5, 0.4, null, 0.86));
+      scene.add(blobMesh(matWall, 0.92, 1.10, 3.4, 0.09, 0.75, 0.2, function () { return [1.3, 1.25, 1.15]; }));
+      scene.add(boxMesh(matSeat, 0.6, 1.06, 3.15, 0.34, 0.05, 0.24, 1.2, 0.3));
+      colliders.push({ x0: 0.6, z0: 3.1, x1: 1.25, z1: 3.7 });
+    })();
+    var coffee = PS1.makeParticles({
+      mode: 'steam', count: 26, color: [0.8, 0.8, 0.82],
+      size: 0.028, speed: 0.5, sway: 0.3,
+      area: [0.8, 1.05, 3.3, 3.5, 0.9], y0: 1.14
+    });
+    scene.add(coffee);
+
+    // ---------------- luggage rack + bags ---------------------------------
+    [-1, 1].forEach(function (side) {
+      scene.add(boxMesh(matWall, side * 1.18, 2.62, 0, 0.5, 0.07, 15.8, 4));
+      for (var rb = 0; rb < 6; rb++) scene.add(boxMesh(matWall, side * 1.18, 2.48, -6.5 + rb * 2.6, 0.06, 0.3, 0.06, 2));
+    });
+    var bags = [];
+    [[-1.18, -5.2], [1.18, -1.4], [1.18, 4.6], [-1.18, 6.8]].forEach(function (bg, bi) {
+      var bag = boxMesh(matSeat, 0, 0, 0, 0.55, 0.4, 0.34, 1.4, 0.1 + bi * 0.07);
+      bag.position.set(bg[0], 2.86, bg[1]);
+      scene.add(bag);
+      bags.push(bag);
+      if (bi % 2 === 0) {
+        var strap = boxMesh(matSeat, 0, 0, 0, 0.06, 0.3, 0.3, 2);
+        strap.position.set(bg[0], 3.02, bg[1]);
+        scene.add(strap);
+      }
+    });
+
+    // ---------------- pendant lamps (swaying with the rail rhythm) --------
+    var pendants = [];
+    LAMPS.forEach(function (lp) {
+      var g = new THREE.Group();
+      g.position.set(lp[0], lp[1], lp[2]);
+      var cord = prismMesh(matWall, 0, 0, 0.025, 0.35, 4, 0.3, 0.4, null, 0);
+      g.add(cord);
+      var shade = prismMesh(matLampShade, 0, 0, 0.17, 0.14, 8, 0.9, 0.4, [1.9, 1.6, 0.95], -0.14);
+      g.add(shade);
+      scene.add(g);
+      pendants.push(g);
+    });
+
+    // ---------------- end doors: corridor gap leaking cold light ----------
+    (function () {
+      scene.add(boxMesh(matWall, 0, 1.1, ZA - 0.05, 2.4, 2.2, 0.1, 2.2));
+      scene.add(boxMesh(matDoorLight, 0, 0.5, ZA - 0.02, 2.3, 0.12, 0.06, 2, 0, [0.55, 0.75, 1.05]));
+      scene.add(boxMesh(matWall, 0, 1.1, ZB + 0.05, 2.4, 2.2, 0.1, 2.2));
+      scene.add(boxMesh(matDoorLight, 0, 0.5, ZB + 0.02, 2.3, 0.12, 0.06, 2, 0, [0.55, 0.75, 1.05]));
+    })();
+
+    // ticket stub + newspaper on a seat
+    scene.add(boxMesh(matWall, -0.92, 0.61, -2.5, 0.3, 0.02, 0.2, 1.2, 0.4));
+    scene.add(boxMesh(matWall, -0.92, 0.61, -4.8, 0.42, 0.02, 0.3, 1.4, -0.2));
+
+    return {
+      name: '午夜列车',
+      scene: scene,
+      colliders: colliders,
+      bounds: { x0: -0.42, x1: 0.42, z0: -8.3, z1: 8.3 },
+      spawn: [0.0, 0.0, 0.0, 0.0],
+      idle: { pos: [0.35, 1.75, 7.6], target: [0.0, 1.9, -7.0] },   // down the aisle: seats, pendant lamps, far door light
+      fog: { color: [0.02, 0.02, 0.04], near: 7, far: 16 },
+      noFlicker: true,
+      blobGroup: decals.blobGroup,
+      particles: [coffee],
+      update: function (t) {
+        // the world rushes past (offset drives the strip texture)
+        outTex.offset.y = -(t * 0.55) % 1;
+        matLampShade.uniforms.uFlicker.value = 0.93 + 0.07 * Math.sin(t * 6.0);
+        matDoorLight.uniforms.uFlicker.value = 0.9 + 0.1 * Math.sin(t * 4.4);
+        // rail rhythm: pendants swing and tick with the sleeper frequency
+        var sway = Math.sin(t * 5.2), tick = Math.sin(t * 24.0) * 0.015;
+        pendants.forEach(function (p, i) {
+          p.rotation.z = sway * 0.08 + tick * (i % 2 ? 1 : -1);
+          p.rotation.x = Math.sin(t * 5.2 + 0.7) * 0.04;
+        });
+        // bags shuffle on the rack
+        bags.forEach(function (b, i) {
+          b.rotation.z = 0.1 + i * 0.07 + Math.sin(t * 5.2 + i) * 0.012;
+        });
+        // passing lights: brief warm pulses when apartment blocks flash by the windows
+        var cyc = t % 6.3;
+        var pulse = cyc < 0.5 ? (1 - Math.abs(cyc - 0.25) * 4) : 0;
+        PS1.shared.uFlash.value = Math.max(0, pulse) * 0.28;
+        lamp.intensity = 0.86 + 0.06 * Math.sin(t * 6.0) + pulse * 0.1;
+        floorTex.offset.y = (t * 0.02) % 1;
+      }
+    };
+  });
+})();
+
+;
+(function () {
+  'use strict';
+  // ======================= 屋顶之夜 ==============================
+  var texFrom = PS1.texFrom, pixelLoop = PS1.pixelLoop, newCanvas = PS1.newCanvas;
+  var hash2 = PS1.hash2, vnoise = PS1.vnoise;
+  var boxMesh = PS1.boxMesh, prismMesh = PS1.prismMesh;
+  var quadCorners = PS1.quadCorners, blobMesh = PS1.blobMesh;
+  var cs = PS1.cs, setRelight = PS1.setRelight;
+  var ps1Material = PS1.ps1Material;
+
+  function roofCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 8, y / 8, 5, 2);
+      var shingle = Math.sin(y * 0.9) * 0.5 + 0.5;
+      var r = 52 + n * 24 + shingle * 10, g = 46 + n * 22 + shingle * 9, b = 48 + n * 20 + shingle * 8;
+      if (hash2(x + 5, y + 9) < 0.02) { r += 40; g += 38; b += 30; }   // bird lime
+      return [r, g, b];
+    });
+  }
+  function brickCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var row = Math.floor(y / 8);
+      var off = (row % 2) * 8;
+      var mortar = (y % 8 < 1) || ((x + off) % 16 < 1);
+      var n = vnoise(x / 6, y / 6, 5, 2);
+      if (mortar) return [58 + n * 14, 54 + n * 12, 50 + n * 10];
+      return [108 + n * 34, 54 + n * 20, 42 + n * 14];
+    });
+  }
+  function cityCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 7, y / 9, 5, 2);
+      var r = 16 + n * 10, g = 15 + n * 9, b = 20 + n * 12;
+      var wx = Math.floor(x / 7), wy = Math.floor(y / 6);
+      if (x % 7 > 1 && x % 7 < 5 && y % 6 > 1 && y % 6 < 4 && hash2(wx, wy) > 0.55) {
+        var warm = hash2(wx * 3, wy * 5);
+        r += 70 + warm * 130; g += 55 + warm * 100; b += 32 + warm * 55;
+      }
+      if (hash2(wx * 7, wy * 11) > 0.985) { r += 60; g += 130; b += 90; }   // the odd TV-green window
+      return [r, g, b];
+    });
+  }
+
+  var roofTex = texFrom(roofCanvas());
+  var brickTex = texFrom(brickCanvas());
+  var cityTex = texFrom(cityCanvas());
+
+  var matRoof = ps1Material(roofTex);
+  var matBrick = ps1Material(brickTex);
+  var matCity = ps1Material(cityTex);
+  var matCloth = ps1Material(texFrom(pixelLoop(newCanvas(64), function (x, y) {
+    var n = vnoise(x / 7, y / 9, 5, 2);
+    var stripe = Math.sin(x * 0.5) > 0;
+    var r = stripe ? 120 + n * 40 : 60 + n * 20, g = stripe ? 72 + n * 24 : 56 + n * 18, b = stripe ? 66 + n * 22 : 62 + n * 20;
+    return [r, g, b];
+  })));
+  var matTV = PS1.privateFlicker(ps1Material(PS1.solidTexture(150, 200, 255)));    // skylight TV glow
+  var matBlinkR = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 70, 60)));  // antenna aircraft light
+
+  var MOONR = new THREE.Vector3(0.3, 0.72, -0.42).normalize();
+  var roofRelight = function (x, y, z, nx, ny, nz) {
+    var ndl = Math.max(0, nx * MOONR.x + ny * MOONR.y + nz * MOONR.z);
+    var hemi = 0.5 + 0.5 * ny;
+    var r = 0.09 + 0.19 * ndl + 0.05 * hemi;
+    var g = 0.10 + 0.21 * ndl + 0.055 * hemi;
+    var b = 0.12 + 0.25 * ndl + 0.065 * hemi;
+    var up = Math.max(0, -ny);                                     // street glow from below
+    r += up * 0.40; g += up * 0.23; b += up * 0.12;
+    return [Math.min(1.1, r), Math.min(1.05, g), Math.min(1.0, b)];
+  };
+
+  PS1.registerScene(function () {
+    setRelight(roofRelight);
+    var scene = new THREE.Scene();
+    var decals = PS1.newDecalSet();
+    var colliders = [];
+
+    var dim = new THREE.DirectionalLight(0x9db4dd, 1);
+    dim.position.copy(MOONR).multiplyScalar(34);
+    dim.castShadow = true;
+    dim.shadow.mapSize.set(1024, 1024);
+    dim.shadow.camera.near = 2; dim.shadow.camera.far = 60;
+    dim.shadow.camera.left = -18; dim.shadow.camera.right = 18;
+    dim.shadow.camera.top = 18; dim.shadow.camera.bottom = -18;
+    dim.shadow.bias = -0.004; dim.shadow.normalBias = 0.05;
+    scene.add(dim); scene.add(dim.target);
+
+    scene.add(PS1.makeSky({
+      top: [0.015, 0.025, 0.05], horizon: [0.13, 0.115, 0.13], bottom: [0.12, 0.085, 0.075],
+      sunDir: [0.3, 0.72, -0.42], sunCol: [0.85, 0.9, 1.0], sunCut: 0.9988, sunGlow: 0.4,
+      stars: 1.0, meteors: 0.4, radius: 90
+    }));
+
+    // ---------------- the roof cluster ------------------------------------
+    var ROOF = 12;
+    scene.add(PS1.groundGrid(matRoof, 0, 0, 18, 13, 6, 2, ROOF, 1));          // home roof
+    scene.add(PS1.groundGrid(matRoof, -14, 4, 13, 14, 5, 2, ROOF - 2.4, 1));  // west lower roof
+    scene.add(PS1.groundGrid(matRoof, 15, -6, 14, 16, 5, 2, ROOF + 1.8, 1));  // east higher roof
+    // roof-edge parapets
+    [[0, -6.4, 18, 0.4], [0, 6.4, 18, 0.4]].forEach(function (pp) {
+      scene.add(cs(boxMesh(matBrick, pp[0], ROOF + 0.25, pp[1], pp[2], 0.5, pp[3], 2)));
+    });
+    // the city below: textured slabs filling the lower view
+    [[-9, 26, -6, 22, 16], [10, 28, 8, 24, 20], [-26, 10, -18, 20, 14], [24, -8, 16, 22, 17],
+     [-2, -26, 8, 24, 19], [26, 24, 20, 20, 22]].forEach(function (b) {
+      scene.add(boxMesh(matCity, b[0], b[4] / 2 - 4, b[1], b[2], b[4], b[3], 3));
+    });
+    // chimneys
+    [[-6.2, -3.8], [6.8, 4.2], [-2.4, 5.4]].forEach(function (cm) {
+      scene.add(cs(boxMesh(matBrick, cm[0], ROOF + 1.1, cm[1], 1.0, 2.2, 1.0, 2)));
+      scene.add(boxMesh(matBrick, cm[0], ROOF + 2.3, cm[1], 1.2, 0.2, 1.2, 2));
+      colliders.push({ x0: cm[0] - 0.6, z0: cm[1] - 0.6, x1: cm[0] + 0.6, z1: cm[1] + 0.6 });
+    });
+    // water tank on legs
+    (function () {
+      var tx = 5.6, tz = -4.4;
+      [[-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]].forEach(function (lg) {
+        scene.add(boxMesh(matBrick, tx + lg[0], ROOF + 0.8, tz + lg[1], 0.16, 1.6, 0.16, 2));
+      });
+      scene.add(cs(prismMesh(matBrick, tx, tz, 1.25, 2.0, 9, 3, 1.6, null, ROOF + 1.6)));
+      scene.add(prismMesh(matBrick, tx, tz, 1.35, 0.5, 9, 3.2, 0.5, null, ROOF + 3.6));
+      colliders.push({ x0: tx - 1.4, z0: tz - 1.4, x1: tx + 1.4, z1: tz + 1.4 });
+    })();
+    // ventilation ducts
+    [[-4.0, 2.8, 0.4], [-3.2, 2.4, 0.3], [2.6, 3.6, 0.5]].forEach(function (dv) {
+      var duct = boxMesh(matBrick, 0, 0, 0, dv[2] * 2, 0.5, dv[2] * 2.4, 2, 0);
+      duct.rotation.y = hash2(dv[0] * 3 | 0, 7) * 1.5;
+      duct.position.set(dv[0], ROOF + 0.25, dv[1]);
+      scene.add(cs(duct));
+    });
+    // skylight box with TV glow inside
+    (function () {
+      var sx = -1.2, sz = -3.4;
+      scene.add(cs(boxMesh(matBrick, sx, ROOF + 0.3, sz, 1.6, 0.6, 1.2, 2)));
+      scene.add(boxMesh(matTV, sx, ROOF + 0.18, sz, 1.3, 0.1, 0.9, 1, 0, [0.7, 1.0, 1.35]));
+      colliders.push({ x0: sx - 0.9, z0: sz - 0.7, x1: sx + 0.9, z1: sz + 0.7 });
+    })();
+    // TV antenna forest on the east roof + one big mast on ours with blinker
+    var antennas = [];
+    for (var an = 0; an < 5; an++) {
+      var ax = 10 + hash2(an, 3) * 9, az = -13 + hash2(an, 7) * 14;
+      var mast = prismMesh(matBrick, 0, 0, 0.05, 2.4 + hash2(an, 5) * 2, 5, 0.4, 2, null, 0);
+      mast.position.set(ax, ROOF + 1.8 + 0.9, az);
+      antennas.push(mast);
+      scene.add(mast);
+      for (var cb = 0; cb < 3; cb++) {
+        scene.add(boxMesh(matBrick, ax, ROOF + 2.6 + cb * 0.75, az, 0.9 + cb * 0.35, 0.05, 0.05, 2));
+      }
+    }
+    var blinker = boxMesh(matBlinkR, -8.3, ROOF + 5.3, 2.6, 0.16, 0.16, 0.16, 1, 0, [1.6, 0.35, 0.3]);
+    scene.add(cs(prismMesh(matBrick, -8.3, 2.6, 0.07, 4.6, 5, 0.5, 3.4, null, ROOF)));
+    scene.add(blinker);
+
+    // ---------------- laundry lines ----------------------------------------
+    var laundry = [];
+    [[-7.4, 1.2, -4.4, 1.2], [2.8, -5.4, 6.4, -5.4]].forEach(function (ln, li) {
+      scene.add(prismMesh(matBrick, ln[0], ln[1], 0.05, 2.1, 5, 0.4, 1.6, null, ROOF));
+      scene.add(prismMesh(matBrick, ln[2], ln[3], 0.05, 2.1, 5, 0.4, 1.6, null, ROOF));
+      scene.add(quadCorners(matBrick, [ln[0], ROOF + 2.0, ln[1] + 0.05], [ln[2], ROOF + 1.92, ln[3] + 0.05],
+        [ln[2], ROOF + 1.88, ln[3] + 0.05], [ln[0], ROOF + 1.96, ln[1] + 0.05], 1.5, 0.1));
+      var n = 4;
+      for (var cl = 1; cl <= n; cl++) {
+        var f = cl / (n + 1);
+        var pivot = new THREE.Group();
+        pivot.position.set(ln[0] + (ln[2] - ln[0]) * f, ROOF + 1.9, ln[1] + (ln[3] - ln[1]) * f);
+        var cw = 0.5 + hash2(li, cl) * 0.3, chh = 0.7 + hash2(cl, li) * 0.5;
+        pivot.add(quadCorners(matCloth, [-cw / 2, 0, 0.012], [cw / 2, 0, 0.012], [cw / 2, -chh, 0.012], [-cw / 2, -chh, 0.012], 0.8, 1));
+        scene.add(pivot);
+        laundry.push({ g: pivot, ph: hash2(li * 3, cl) * 6 });
+      }
+    });
+
+    // ---------------- pigeons: pecking on the roof + one circling flock ----
+    var perch = [];
+    [[-2.2, 2.4], [-1.6, 2.9], [3.4, -2.6], [7.2, 2.2]].forEach(function (pp, pi) {
+      var pg = new THREE.Group();
+      var body = blobMesh(matBrick, 0, 0, 0, 0.13, 1.35, 0.25, function () { return [0.85, 0.82, 0.8]; });
+      var head = blobMesh(matBrick, 0.1, 0.09, 0.02, 0.07, 1, 0.2, function () { return [0.6, 0.58, 0.6]; });
+      pg.add(body); pg.add(head);
+      pg.position.set(pp[0], ROOF + 0.16, pp[1]);
+      pg.rotation.y = hash2(pi, 11) * Math.PI * 2;
+      scene.add(pg);
+      perch.push({ g: pg, head: head, ph: pi * 1.7 });
+    });
+    var flock = [];
+    for (var fb = 0; fb < 7; fb++) {
+      var bird = new THREE.Group();
+      var bb = boxMesh(matBrick, 0, 0, 0, 0.12, 0.2, 0.07, 1);
+      var w1 = boxMesh(matBrick, 0, 0.04, 0, 0.3, 0.04, 0.08, 1); w1.position.x = 0.15;
+      var w2 = boxMesh(matBrick, 0, 0.04, 0, 0.3, 0.04, 0.08, 1); w2.position.x = -0.15;
+      bird.add(bb); bird.add(w1); bird.add(w2);
+      bird.userData = { ph: fb / 7 * Math.PI * 2, r: 6 + hash2(fb, 3) * 4, y: ROOF + 5 + hash2(fb, 5) * 3, wings: [w1, w2] };
+      scene.add(bird);
+      flock.push(bird);
+    }
+    // drifting smog + one distant plane light
+    var smog = PS1.makeParticles({
+      mode: 'dust', count: 150, color: [0.30, 0.28, 0.30],
+      size: 0.09, speed: 0.3, sway: 1.2,
+      area: [-20, 20, -16, 10, 3.5], y0: 6
+    });
+    scene.add(smog);
+    var plane = boxMesh(matBlinkR, 0, 0, 0, 0.22, 0.06, 0.06, 1, 0, [1.5, 0.4, 0.35]);
+    scene.add(plane);
+
+    return {
+      name: '屋顶之夜',
+      scene: scene,
+      colliders: colliders,
+      bounds: { x0: -8.6, x1: 8.6, z0: -6.0, z1: 6.0 },
+      spawn: [4.0, 4.5, Math.atan2(-(-8.3 - 4.0), -(2.6 - 4.5)), 0.08],
+      eyeY: ROOF + 1.62,
+      idle: { pos: [-3.4, ROOF + 2.4, 4.8], target: [6.5, ROOF + 1.0, -8.5] },   // across the roofs: laundry foreground, antenna masts, city glow below
+      fog: { color: [0.05, 0.05, 0.07], near: 22, far: 80 },
+      noFlicker: true,
+      blobGroup: decals.blobGroup,
+      particles: [smog],
+      update: function (t) {
+        matTV.uniforms.uFlicker.value = 0.55 + 0.45 * Math.abs(Math.sin(t * 13.0) * Math.sin(t * 3.7) + 0.3 * Math.sin(t * 31.0)) * 0.9;
+        matBlinkR.uniforms.uFlicker.value = (t % 2.6) < 0.3 ? 1.4 : 0.1;
+        laundry.forEach(function (c) {
+          c.g.rotation.z = 0.16 * Math.sin(t * 1.9 + c.ph) + 0.06 * Math.sin(t * 5.1 + c.ph * 2);
+          c.g.rotation.x = 0.08 * Math.cos(t * 1.3 + c.ph);
+        });
+        perch.forEach(function (p) {
+          p.head.position.y = 0.09 + (Math.sin(t * 2.0 + p.ph) > 0.6 ? -0.05 : 0);   // peck bob
+          p.g.rotation.y += 0.002;
+        });
+        flock.forEach(function (b) {
+          var u = b.userData;
+          var a = u.ph + t * 0.3;
+          b.position.set(Math.cos(a) * u.r, u.y + Math.sin(t * 0.6 + u.ph) * 0.8, Math.sin(a) * u.r * 0.7);
+          b.rotation.y = -a + Math.PI / 2;
+          var flap = Math.sin(t * 7.5 + u.ph * 4) * 0.55;
+          u.wings[0].rotation.z = flap;
+          u.wings[1].rotation.z = -flap;
+        });
+        antennas.forEach(function (m, i) {
+          m.rotation.z = 0.02 * Math.sin(t * 2.2 + i * 1.9);   // wind wobble
+        });
+        plane.position.set(-50 + (t * 3.5) % 110, 34 + Math.sin(t * 0.2) * 1.5, -42);
+      }
+    };
+  });
+})();
+
+;
+(function () {
+  'use strict';
+  // ======================= 废弃游乐园 ==============================
+  var texFrom = PS1.texFrom, pixelLoop = PS1.pixelLoop, newCanvas = PS1.newCanvas;
+  var hash2 = PS1.hash2, vnoise = PS1.vnoise;
+  var boxMesh = PS1.boxMesh, prismMesh = PS1.prismMesh;
+  var quadCorners = PS1.quadCorners, blobMesh = PS1.blobMesh;
+  var cs = PS1.cs, setRelight = PS1.setRelight;
+  var ps1Material = PS1.ps1Material;
+
+  function asphaltCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 7, y / 7, 6, 3);
+      var crack = vnoise(x / 14 + 4, y / 14, 4, 2);
+      var r = 44 + n * 18, g = 44 + n * 18, b = 42 + n * 16;
+      if (crack > 0.72) { var k = (crack - 0.72) * 2.2; r *= 1 - k * 0.55; g *= 1 - k * 0.55; b *= 1 - k * 0.5; }
+      if (hash2(x, y) < 0.012) { r += 40; g += 44; b += 22; }        // weeds poking through
+      return [r, g, b];
+    });
+  }
+  function rustCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 6, y / 6, 5, 2);
+      var rust = vnoise(x / 9 + 7, y / 9, 5, 2);
+      var r = 96 + n * 26, g = 92 + n * 24, b = 90 + n * 22;
+      if (rust > 0.6) { var k = (rust - 0.6) * 2.0; r = r * (1 - k) + 150 * k; g = g * (1 - k) + 76 * k; b = b * (1 - k) + 42 * k; }
+      if (rust < 0.3) { r *= 0.8; g *= 0.8; b *= 0.82; }             // old paint
+      return [r, g, b];
+    });
+  }
+  function horseCanvas() {
+    return pixelLoop(newCanvas(64), function (x, y) {
+      var n = vnoise(x / 6, y / 6, 4, 2);
+      var r = 190 + n * 40, g = 150 + n * 34, b = 120 + n * 28;
+      var peel = hash2(Math.floor(x / 9), Math.floor(y / 9));
+      if (peel < 0.22) { r *= 0.5; g *= 0.5; b *= 0.5; }             // peeled patches
+      return [r, g, b];
+    });
+  }
+
+  var asphTex = texFrom(asphaltCanvas());
+  var rustTex = texFrom(rustCanvas());
+  var horseTex = texFrom(horseCanvas());
+
+  var matAsph = ps1Material(asphTex);
+  var matRust = ps1Material(rustTex);
+  var matHorse = ps1Material(horseTex);
+  var matMarquee = PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 220, 130)));   // marquee bulbs
+  var matMarqueeD = PS1.privateFlicker(ps1Material(PS1.solidTexture(90, 80, 60)));     // dead bulbs
+  var matGlow = PS1.privateFlicker(ps1Material(PS1.solidTexture(160, 255, 190)));      // carousel inner glow
+
+  var MOONP = new THREE.Vector3(-0.2, 0.7, 0.55).normalize();
+  var ARCH = [0, 0, 24];     // entrance arch position (behind the spawn view)
+  var parkRelight = function (x, y, z, nx, ny, nz) {
+    var ndl = Math.max(0, nx * MOONP.x + ny * MOONP.y + nz * MOONP.z);
+    var hemi = 0.5 + 0.5 * ny;
+    var r = 0.11 + 0.24 * ndl + 0.07 * hemi;
+    var g = 0.12 + 0.25 * ndl + 0.075 * hemi;
+    var b = 0.14 + 0.28 * ndl + 0.08 * hemi;
+    var gl = 1.1 / (1 + (x * x + y * y + z * z) * 0.004);           // faint dead-neon wash from the centre
+    r += gl * 0.14; g += gl * 0.17; b += gl * 0.15;
+    return [Math.min(1.1, r), Math.min(1.05, g), Math.min(1.0, b)];
+  };
+
+  PS1.registerScene(function () {
+    setRelight(parkRelight);
+    var scene = new THREE.Scene();
+    var decals = PS1.newDecalSet();
+    var colliders = [];
+
+    var dim = new THREE.DirectionalLight(0x9db4dd, 0.95);
+    dim.position.copy(MOONP).multiplyScalar(36);
+    dim.castShadow = true;
+    dim.shadow.mapSize.set(1024, 1024);
+    dim.shadow.camera.near = 2; dim.shadow.camera.far = 70;
+    dim.shadow.camera.left = -24; dim.shadow.camera.right = 24;
+    dim.shadow.camera.top = 24; dim.shadow.camera.bottom = -24;
+    dim.shadow.bias = -0.004; dim.shadow.normalBias = 0.05;
+    scene.add(dim); scene.add(dim.target);
+
+    scene.add(PS1.makeSky({
+      top: [0.02, 0.03, 0.05], horizon: [0.07, 0.08, 0.11], bottom: [0.04, 0.05, 0.06],
+      sunDir: [-0.2, 0.7, 0.55], sunCol: [0.75, 0.82, 0.95], sunCut: 0.999, sunGlow: 0.35,
+      stars: 0.9, meteors: 0.3, radius: 100
+    }));
+
+    // ---------------- ground + perimeter fence ---------------------------
+    scene.add(PS1.groundGrid(matAsph, 0, 0, 70, 70, 10, 2, 0, 1));
+    for (var fz = -30; fz <= 30; fz += 3) {
+      if (Math.abs(fz - ARCH[2]) < 3) continue;                      // gate gap
+      scene.add(prismMesh(matRust, -33, fz, 0.06, 2.2, 4, 0.4, 1.6, null, 0));
+      scene.add(quadCorners(matRust, [-33, 2.0, fz - 1.5], [-33, 2.0, fz + 1.5], [-33, 0, fz + 1.5], [-33, 0, fz - 1.5], 1, 1));
+    }
+
+    // ---------------- the dead ferris wheel ------------------------------
+    var wheel = new THREE.Group();
+    var gondolas = [];
+    var badBulbs = [];   // the three loose bulbs that still spark
+    (function () {
+      var FX = 0, FZ = -20, R = 9, AXLE_Y = R + 2.2;
+      wheel.position.set(FX, AXLE_Y, FZ);
+      var matBulbDead = ps1Material(PS1.solidTexture(52, 58, 66));
+      // twin rims: 24 chords each side, cross-ties every 3rd node
+      [-0.55, 0.55].forEach(function (zSide) {
+        for (var rg = 0; rg < 24; rg++) {
+          var a0 = rg / 24 * Math.PI * 2, a1 = (rg + 1) / 24 * Math.PI * 2;
+          var c0 = Math.cos(a0) * R, s0 = Math.sin(a0) * R, c1 = Math.cos(a1) * R, s1 = Math.sin(a1) * R;
+          var seg = boxMesh(matRust, 0, 0, 0, 0.42, 0.42, Math.hypot(c1 - c0, s1 - s0) + 0.42, 2, 0);
+          seg.position.set((c0 + c1) / 2, (s0 + s1) / 2, zSide);
+          seg.rotation.z = Math.atan2(s1 - s0, c1 - c0);
+          wheel.add(seg);
+          if (rg % 3 === 0) {
+            var tie = boxMesh(matRust, 0, 0, 0, 0.2, 0.2, 1.1, 2, 0);
+            tie.rotation.x = Math.PI / 2;
+            tie.position.set(c0, s0, 0);
+            wheel.add(tie);
+          }
+        }
+      });
+      // 12 spokes, tips aligned with the gondola mounts
+      for (var sp2 = 0; sp2 < 12; sp2++) {
+        var sa = sp2 / 12 * Math.PI * 2;
+        var spoke = boxMesh(matRust, 0, 0, 0, 0.16, R, 0.16, 2, 0);
+        spoke.position.set(Math.cos(sa) * R / 2, Math.sin(sa) * R / 2, 0);
+        spoke.rotation.z = sa - Math.PI / 2;
+        wheel.add(spoke);
+      }
+      // hub (axle itself is added to the scene, not the wheel)
+      var hub = prismMesh(matRust, 0, 0, 1.3, 1.3, 8, 2, 0.8, null, -0.65);
+      hub.rotation.x = Math.PI / 2;
+      wheel.add(hub);
+      var axle = prismMesh(matRust, 0, 0, 0.34, 6.4, 7, 1.2, 1.6, null, -0.17);
+      axle.rotation.x = Math.PI / 2;
+      axle.position.set(FX, AXLE_Y, FZ);
+      scene.add(axle);
+      [-2.2, 2.2].forEach(function (az2) {
+        scene.add(boxMesh(matRust, FX, AXLE_Y, FZ + az2, 1.1, 1.1, 0.8, 2));
+      });
+      // 12 gondolas, each on a spoke tip (z=0 between the rims)
+      for (var gd = 0; gd < 12; gd++) {
+        var ga = gd / 12 * Math.PI * 2;
+        var gg = new THREE.Group();
+        gg.position.set(Math.cos(ga) * R, Math.sin(ga) * R, 0);
+        var arm = prismMesh(matRust, 0, 0, 0.05, 0.9, 4, 0.3, 0.6, null, 0);
+        arm.position.y = -0.45;
+        gg.add(arm);
+        var cab = boxMesh(matHorse, 0, 0, 0, 0.95, 0.8, 0.8, 1.6);
+        cab.position.y = -1.05;
+        gg.add(cab);
+        var roofC = boxMesh(matHorse, 0, 0, 0, 1.05, 0.12, 0.9, 1.6);
+        roofC.position.y = -0.62;
+        gg.add(roofC);
+        var bench = boxMesh(matHorse, 0, 0, 0, 0.7, 0.1, 0.5, 1.4);
+        bench.position.y = -1.15;
+        gg.add(bench);
+        wheel.add(gg);
+        gondolas.push(gg);
+      }
+      scene.add(wheel);
+      // dead bulb string around the front rim: outlines the circle at night,
+      // three loose bulbs still spark
+      for (var bl2 = 0; bl2 < 24; bl2++) {
+        var ba = bl2 / 24 * Math.PI * 2;
+        var bad = (bl2 === 5 || bl2 === 14 || bl2 === 19);
+        var bm = bad ? PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 210, 130))) : matBulbDead;
+        var bulb = boxMesh(bm, FX + Math.cos(ba) * R, AXLE_Y + Math.sin(ba) * R, FZ + 0.78,
+          0.22, 0.22, 0.14, 1, 0, bad ? [1.9, 1.5, 0.7] : [0.14, 0.16, 0.18]);
+        scene.add(bulb);
+        if (bad) badBulbs.push({ m: bm, ph: bl2 * 0.7 });
+      }
+      // A-frames: two planes, legs aimed EXACTLY at the axle bearings
+      [-2.2, 2.2].forEach(function (az2) {
+        [-1, 1].forEach(function (lx) {
+          var foot = 4.6 * lx;
+          var len = Math.hypot(foot, AXLE_Y);
+          var leg = prismMesh(matRust, 0, 0, 0.3, len, 5, 1, 2.2, null, 0);
+          leg.position.set(FX + foot / 2, AXLE_Y / 2, FZ + az2);
+          leg.rotation.z = Math.atan2(foot, AXLE_Y);
+          scene.add(cs(leg));
+        });
+        scene.add(boxMesh(matRust, FX, AXLE_Y * 0.42, FZ + az2, 6.8, 0.24, 0.24, 2));
+      });
+      // longitudinal braces joining front and back frames
+      [-3.4, 3.4].forEach(function (lb) {
+        var brace = boxMesh(matRust, 0, 0, 0, 0.2, 0.2, 4.4, 2, 0);
+        brace.rotation.x = Math.PI / 2;
+        brace.position.set(FX + lb, AXLE_Y * 0.7, FZ);
+        scene.add(brace);
+      });
+      colliders.push({ x0: FX - 5.2, z0: FZ - 3.0, x1: FX + 5.2, z1: FZ + 3.0 });
+    })();
+
+    // ---------------- the carousel that sputters --------------------------
+    var carousel = new THREE.Group();
+    var horses = [];
+    (function () {
+      var CX = 14, CZ = 4;
+      carousel.position.set(CX, 0, CZ);
+      carousel.add(prismMesh(matRust, 0, 0, 4.4, 0.5, 10, 4, 0.6, null, 0));
+      // canopy cone with faded stripes
+      var matStripe = ps1Material(texFrom(pixelLoop(newCanvas(64), function (x, y) {
+        var stripe = Math.sin(x * 0.98) > 0;
+        var n = vnoise(x / 6, y / 10, 4, 2);
+        var r = stripe ? 130 + n * 30 : 52 + n * 18, g = stripe ? 60 + n * 22 : 50 + n * 16, b = stripe ? 58 + n * 20 : 54 + n * 18;
+        return [r, g, b];
+      })));
+      var cone = prismMesh(matStripe, 0, 0, 0.2, 1.7, 10, 4.5, 1.4, null, 4.2);
+      carousel.add(cone);
+      carousel.add(prismMesh(matRust, 0, 0, 0.12, 1.3, 8, 0.6, 0.5, null, 5.9));
+      // centre pole + inner glow ring
+      carousel.add(prismMesh(matRust, 0, 0, 0.16, 4.2, 6, 0.6, 3, null, 0.5));
+      var glowRing = prismMesh(matGlow, 0, 0, 1.5, 0.24, 10, 3.2, 0.5, [0.5, 1.3, 0.9], 3.6);
+      carousel.add(glowRing);
+      // horses on poles
+      for (var hp = 0; hp < 6; hp++) {
+        var ha = hp / 6 * Math.PI * 2;
+        var hg = new THREE.Group();
+        hg.position.set(Math.cos(ha) * 2.7, 1.4 + (hp % 2) * 0.7, Math.sin(ha) * 2.7);
+        hg.add(prismMesh(matRust, 0, 0, 0.05, 2.6, 4, 0.3, 2, null, -0.4 - (hp % 2) * 0.7));
+        var body = blobMesh(matHorse, 0, 0, 0, 0.5, 1.5, 0.3, function () { return [1, 0.95, 0.85]; });
+        body.scale.set(1, 0.8, 1.15);
+        hg.add(body);
+        var head = blobMesh(matHorse, 0.55, 0.22, 0, 0.22, 1.2, 0.25, function () { return [1, 0.95, 0.85]; });
+        hg.add(head);
+        hg.add(boxMesh(matRust, -0.5, 0.1, 0, 0.3, 0.4, 0.08, 1.6, 0.4));   // one broken leg
+        carousel.add(hg);
+        horses.push(hg);
+      }
+      scene.add(carousel);
+      colliders.push({ x0: CX - 4.4, z0: CZ - 4.4, x1: CX + 4.4, z1: CZ + 4.4 });
+    })();
+
+    // ---------------- entrance arch + marquee letters ---------------------
+    var letters = [];
+    (function () {
+      var word = 'LUNA';
+      var dead = { L: false, U: true, N: false, A: false };          // U is burnt out
+      for (var li = 0; li < word.length; li++) {
+        var lx = ARCH[0] - 4.2 + li * 2.8;
+        scene.add(prismMesh(matRust, lx, ARCH[2] - 0.7, 0.28, 4.6, 5, 1, 3, null, 0));
+        scene.add(prismMesh(matRust, lx, ARCH[2] + 0.7, 0.28, 4.6, 5, 1, 3, null, 0));
+        var board = boxMesh(matRust, lx, 5.1, ARCH[2], 2.4, 1.3, 0.24, 2);
+        scene.add(board);
+        var matBulb = dead[word[li]] ? matMarqueeD : PS1.privateFlicker(ps1Material(PS1.solidTexture(255, 220, 130)));
+        var bulb = boxMesh(matBulb, lx, 5.1, ARCH[2] + 0.2, 0.5, 0.7, 0.1, 1, 0,
+          dead[word[li]] ? [0.25, 0.22, 0.18] : [1.8, 1.45, 0.6]);
+        scene.add(bulb);
+        letters.push({ m: dead[word[li]] ? null : matBulb, i: li });
+      }
+      scene.add(boxMesh(matRust, ARCH[0] - 6.4, 3.4, ARCH[2], 1.6, 0.9, 0.8, 2, 0.3));   // ticket booth
+      colliders.push({ x0: ARCH[0] - 7.4, z0: ARCH[2] - 0.6, x1: ARCH[0] - 5.4, z1: ARCH[2] + 0.6 });
+    })();
+
+    // ---------------- bumper cars + popcorn cart + mascot -----------------
+    [[-16, 10, 0.3], [-13.5, 13, 0.9], [-19, 15, 2.1], [18, -12, 0.6]].forEach(function (bc, bi) {
+      var car = new THREE.Group();
+      var shell = prismMesh(matHorse, 0, 0, 0.9, 0.55, 9, 2.2, 0.5, null, 0);
+      car.add(shell);
+      var pole = prismMesh(matRust, 0, 0, 0.05, 1.2, 4, 0.3, 0.8, null, 0.55);
+      pole.rotation.z = 0.35;
+      car.add(pole);
+      car.position.set(bc[0], 0.35, bc[1]);
+      car.rotation.y = bc[2];
+      if (bi === 2) car.rotation.z = 0.7;                            // one tipped over
+      scene.add(car);
+      colliders.push({ x0: bc[0] - 1.0, z0: bc[1] - 1.0, x1: bc[0] + 1.0, z1: bc[1] + 1.0 });
+    });
+    (function () {
+      var px = -8, pz = 16;
+      scene.add(boxMesh(matRust, px, 0.55, pz, 1.8, 1.1, 1.0, 2));
+      scene.add(boxMesh(matHorse, px, 1.35, pz, 1.0, 0.55, 0.12, 1.5, 0.35));    // broken awning
+      [[-0.7], [0.7]].forEach(function (wg) {
+        var w = prismMesh(matRust, 0, 0, 0.34, 0.12, 8, 1.4, 0.4, null, 0);
+        w.rotation.x = Math.PI / 2;
+        w.position.set(px + wg[0], 0.34, pz);
+        scene.add(w);
+      });
+      colliders.push({ x0: px - 1.0, z0: pz - 0.7, x1: px + 1.0, z1: pz + 0.7 });
+    })();
+    // mascot: a peeling bear on a stump
+    (function () {
+      var mx = -14, mz = -6;
+      scene.add(cs(prismMesh(matRust, mx, mz, 0.7, 0.7, 8, 1.8, 0.6, null, 0)));
+      scene.add(blobMesh(matHorse, mx, 2.0, mz, 0.75, 1.25, 0.3, function () { return [1.05, 0.85, 0.7]; }));
+      scene.add(blobMesh(matHorse, mx - 0.5, 2.9, mz, 0.24, 1, 0.2, function () { return [1.05, 0.85, 0.7]; }));
+      scene.add(blobMesh(matHorse, mx + 0.5, 2.9, mz, 0.24, 1, 0.2, function () { return [1.05, 0.85, 0.7]; }));
+      scene.add(blobMesh(matHorse, mx, 2.9, mz + 0.45, 0.3, 1, 0.2, function () { return [1.0, 0.8, 0.65]; }));
+      colliders.push({ x0: mx - 0.9, z0: mz - 0.9, x1: mx + 0.9, z1: mz + 0.9 });
+    })();
+
+    // ---------------- weeds + crows + dust --------------------------------
+    var weeds = [];
+    for (var wd = 0; wd < 34; wd++) {
+      var wx = -30 + hash2(wd, 13) * 60, wz = -28 + hash2(wd, 29) * 56;
+      if (Math.abs(wx) < 8 && Math.abs(wz) < 10) wx += 14;
+      var clump = new THREE.Group();
+      clump.position.set(wx, 0, wz);
+      for (var bl = 0; bl < 3; bl++) {
+        var blade = prismMesh(matHorse, 0, 0, 0.05, 0.5 + hash2(wd, bl) * 0.7, 4, 0.3, 0.8, null, 0);
+        blade.position.set((hash2(bl, wd) - 0.5) * 0.3, 0, (hash2(wd * 3, bl) - 0.5) * 0.3);
+        blade.rotation.z = (hash2(wd, bl * 7) - 0.5) * 0.5;
+        clump.add(blade);
+      }
+      scene.add(clump);
+      weeds.push({ g: clump, ph: hash2(wd, 5) * 6 });
+    }
+    var crows = [];
+    for (var cr = 0; cr < 5; cr++) {
+      var crow = new THREE.Group();
+      var cb = boxMesh(matRust, 0, 0, 0, 0.15, 0.3, 0.09, 1);
+      var cw1 = boxMesh(matRust, 0, 0.06, 0, 0.32, 0.05, 0.1, 1); cw1.position.x = 0.2;
+      var cw2 = boxMesh(matRust, 0, 0.06, 0, 0.32, 0.05, 0.1, 1); cw2.position.x = -0.2;
+      crow.add(cb); crow.add(cw1); crow.add(cw2);
+      crow.userData = { ph: cr / 5 * Math.PI * 2, r: 5 + hash2(cr, 3) * 3, y: 8 + hash2(cr, 5) * 2.5, wings: [cw1, cw2] };
+      scene.add(crow);
+      crows.push(crow);
+    }
+    var dust = PS1.makeParticles({
+      mode: 'dust', count: 170, color: [0.42, 0.42, 0.40],
+      size: 0.05, speed: 0.4, sway: 1.0,
+      area: [-24, 24, -22, 18, 2.6], y0: 0.2
+    });
+    scene.add(dust);
+
+    // power-surge state: every ~26 s the park blinks half-alive then dies
+    var surge = { next: 8 };
+
+    return {
+      name: '废弃游乐园',
+      scene: scene,
+      colliders: colliders,
+      bounds: { x0: -26, x1: 26, z0: -24, z1: 21 },
+      spawn: [0.0, 18.0, Math.PI, 0.04],
+      idle: { pos: [-1.6, 2.6, 20.5], target: [7.5, 6.0, -14.0] },   // dead ferris wheel left-of-centre, carousel with its glow cones in from the right
+      fog: { color: [0.05, 0.06, 0.08], near: 18, far: 72 },
+      noFlicker: true,
+      blobGroup: decals.blobGroup,
+      particles: [dust],
+      update: function (t) {
+        // ferris wheel: rusted bearing - it strains, freezes, then breaks free
+        // one 15-degree notch every 4.5 s: slow fight (0-2.5 s), snap (0.5 s), settle (1.5 s)
+        var CYC = 4.5, STEP = Math.PI / 12;
+        var k = t % CYC;
+        var prog = k < 2.5 ? 0.06 * (k / 2.5) : k < 3.0 ? 0.06 + 0.94 * (k - 2.5) / 0.5 : 1 - 0.035 * (1 - (k - 3.0) / 1.5);
+        var lurch = Math.floor(t / CYC);
+        wheel.rotation.z = -(lurch + prog) * STEP;
+        var snap = (k > 2.5 && k < 3.05) ? 1 : 0;
+        gondolas.forEach(function (g, i) {
+          g.rotation.z = -wheel.rotation.z + 0.09 * Math.sin(t * 0.8 + i * 1.3) + snap * 0.3 * Math.sin(i * 2.1);
+        });
+        // the three loose bulbs spark, each on its own erratic schedule
+        badBulbs.forEach(function (b) {
+          var spark = (Math.sin(t * 7.3 + b.ph) > 0.86 || Math.sin(t * 2.1 + b.ph * 3) > 0.965);
+          b.m.uniforms.uFlicker.value = spark ? 1.6 : 0.06;
+        });
+        // carousel sputter: every 19 s it wakes, spins and dies again
+        var cyc = (t + 6) % 19;
+        var spin = 0;
+        if (cyc < 7) {
+          var f = cyc / 7;
+          spin = (f * f * (3 - 2 * f)) * 2.2;                        // smooth step up
+        } else if (cyc < 12) {
+          spin = 2.2 + (cyc - 7) * 1.8;
+        } else {
+          spin = 11.2 + (cyc - 12) * 0.9 * Math.max(0, 1 - (cyc - 12) / 5);
+        }
+        carousel.rotation.y = spin * 0.9;
+        var alive = cyc > 0 && cyc < 12 ? 1 : 0;
+        matGlow.uniforms.uFlicker.value = alive ? (0.75 + 0.25 * Math.sin(t * 17.0)) : 0.06 + 0.04 * Math.sin(t * 1.1);
+        horses.forEach(function (h, i) {
+          h.position.y = 1.4 + (i % 2) * 0.7 + (alive ? 0.18 * Math.sin(t * 2.2 + i * 1.1) : 0);
+        });
+        // marquee bulbs: slow chase, the dead U stays dark
+        letters.forEach(function (lt) {
+          if (!lt.m) return;
+          var on = ((t * 1.4 + lt.i * 0.9) % 6) < 4.2;               // bulb chase around the sign
+          lt.m.uniforms.uFlicker.value = on ? 1.5 : 0.25;
+        });
+        // whole-park power surge: a brief green-white flash every ~26 s
+        var s2 = 0;
+        if (t > surge.next) {
+          var since = t - surge.next;
+          if (since < 0.06) s2 = 0.7;
+          else if (since < 0.5) s2 = 0.15;
+          else if (since > 1.1) surge.next = t + 20 + Math.random() * 14;
+        }
+        PS1.shared.uFlash.value = s2 * (0.8 + 0.2 * Math.sin(t * 83.0)) * (s2 > 0 ? 1 : 0);
+        weeds.forEach(function (w) {
+          w.g.rotation.x = 0.14 * Math.sin(t * 1.6 + w.ph);
+          w.g.rotation.z = 0.11 * Math.cos(t * 1.2 + w.ph * 1.7);
+        });
+        crows.forEach(function (c) {
+          var u = c.userData;
+          var a = u.ph + t * 0.32;
+          c.position.set(Math.cos(a) * u.r, u.y + Math.sin(t * 0.7 + u.ph) * 0.5, -20 + Math.sin(a) * u.r);
+          c.rotation.y = -a;
+          var flap = Math.sin(t * 6.4 + u.ph * 4) * 0.5;
+          u.wings[0].rotation.z = flap;
+          u.wings[1].rotation.z = -flap;
+        });
+      }
+    };
+  });
+})();
+
+;
 // boot after all scenes have registered (build.js concatenates files in order)
 PS1.boot();
 
