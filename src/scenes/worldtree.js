@@ -83,7 +83,7 @@
 
     scene.add(PS1.makeSky({
       top: [0.02, 0.035, 0.07], horizon: [0.10, 0.12, 0.16], bottom: [0.04, 0.05, 0.07],
-      sunDir: [-0.15, 0.70, -0.62], sunCol: [0.9, 0.95, 1.0], sunCut: 0.9987, sunGlow: 0.85,
+      sunDir: [-0.15, 0.70, -0.62], sunCol: [0.9, 0.95, 1.0], sunCut: 0.9975, sunGlow: 0.85,
       stars: 1.0, meteors: 0.5, radius: 100
     }));
 

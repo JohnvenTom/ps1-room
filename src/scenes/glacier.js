@@ -229,7 +229,7 @@
       colliders: colliders,
       bounds: { x0: -19.5, x1: 19.5, z0: 0.5, z1: 23.5 },
       spawn: [-6.0, 12.0, Math.atan2(-(0 - -6.0), -(-22 - 12.0)), 0.10],
-      idle: { pos: [-4.5, 2.6, 16.5], target: [-2.0, 11.5, -24.0] },   // shore -> glacier wall under the aurora curtain
+      idle: { pos: [-4.5, 2.6, 16.5], target: [1.5, 10.5, -22.0] },   // shore -> longship foreground-right, glacier wall under the aurora
       fog: { color: [0.09, 0.14, 0.20], near: 16, far: 78 },
       noFlicker: true,
       blobGroup: decals.blobGroup,
